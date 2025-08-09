@@ -1,0 +1,12 @@
+{
+  "name": "hr-dashboard-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npx concurrently -n server,client -c blue,green \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "start": "npm install --no-audit --no-fund && npm --prefix server install --no-audit --no-fund && npm --prefix client install --no-audit --no-fund && npm run dev"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
