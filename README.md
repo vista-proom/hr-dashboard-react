@@ -38,3 +38,34 @@ Backend reads `JWT_SECRET` from `server/.env` if provided. Defaults to a develop
 ## Tech
 - Backend: Node.js, Express, better-sqlite3, JWT, bcrypt
 - Frontend: React (Vite), React Router, Axios, Tailwind CSS
+
+## Windows Installation
+- Option 1 (recommended): PowerShell auto installer
+  - Open PowerShell in the repo folder and run:
+    ```powershell
+    .\scripts\windows-install.ps1 -Run
+    ```
+    This will:
+    - Install Node.js LTS via winget/choco if needed
+    - Install all dependencies (root, server, client)
+    - Start both dev servers
+
+- Option 2: Batch wrapper
+  - Double-click `scripts\windows-install.bat` or run in Command Prompt:
+    ```bat
+    scripts\windows-install.bat -Run
+    ```
+
+- Manual
+  - Install Node.js LTS from `https://nodejs.org`
+  - In repo root:
+    ```bat
+    npm install
+    npm --prefix server install
+    npm --prefix client install
+    npm run dev
+    ```
+
+Notes:
+- If `winget` is not available, the script falls back to Chocolatey if present.
+- If neither is available, please install Node.js LTS manually then re-run the installer.
