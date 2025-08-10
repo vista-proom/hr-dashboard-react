@@ -24,6 +24,7 @@ export function AuthProvider({ children }) {
     const resp = await api.post('/auth/login', { email, password });
     setToken(resp.data.token);
     setUser(resp.data.user);
+    return resp.data.user;
   };
 
   const logout = () => {

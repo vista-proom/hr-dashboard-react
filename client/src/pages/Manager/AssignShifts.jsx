@@ -14,7 +14,6 @@ export default function AssignShifts() {
   const [locations, setLocations] = useState([]);
   const [form, setForm] = useState({ userId: '', date: '', startTime: '', endTime: '', hours: 8, locationId: '', kind: 'Work' });
   const [newLocation, setNewLocation] = useState({ name: '', googleMapsUrl: '' });
-  const [previewUserId, setPreviewUserId] = useState('');
   const [serverSchedules, setServerSchedules] = useState([]);
   const [pendingEntries, setPendingEntries] = useState([]); // unsaved shifts
 
@@ -24,7 +23,7 @@ export default function AssignShifts() {
       const emps = u.data.filter((x) => x.role === 'Employee');
       setEmployees(emps);
       setLocations(l.data);
-      if (emps.length && !previewUserId) setPreviewUserId(String(emps[0].id));
+      if (emps.length && !form.userId) setForm((f) => ({ ...f, userId: String(emps[0].id) }));
     };
     run();
   }, []);
@@ -35,22 +34,32 @@ export default function AssignShifts() {
     setServerSchedules(data);
   };
 
-  useEffect(() => { loadPreview(previewUserId); }, [previewUserId]);
+  useEffect(() => { loadPreview(form.userId); }, [form.userId]);
 
-  const save = async () => {
+  const saveShift = async () => {
     if (!form.userId || !form.date) return;
-    const created = await api.post('/schedules', { userId: Number(form.userId), date: form.date, startTime: form.startTime, endTime: form.endTime, hours: Number(form.hours), locationId: form.locationId ? Number(form.locationId) : null, kind: form.kind });
+    await api.post('/schedules', { userId: Number(form.userId), date: form.date, startTime: form.startTime, endTime: form.endTime, hours: Number(form.hours), locationId: form.locationId ? Number(form.locationId) : null, kind: form.kind });
     // Clear pending that matches this entry
     setPendingEntries((p) => p.filter((e) => !(e.userId === form.userId && e.date === form.date && e.startTime === form.startTime && e.endTime === form.endTime && e.locationId === form.locationId)));
     await loadPreview(form.userId);
-    alert('Schedule saved');
   };
 
-  const addLocation = async () => {
-    if (!newLocation.name) return;
-    const { data } = await api.post('/locations', { name: newLocation.name, googleMapsUrl: newLocation.googleMapsUrl });
-    setLocations((prev) => [...prev, data]);
-    setNewLocation({ name: '', googleMapsUrl: '' });
+  const clearCurrent = () => {
+    setForm((f) => ({ ...f, date: '', startTime: '', endTime: '', hours: 8, locationId: '', kind: 'Work' }));
+    setPendingEntries([]);
+  };
+
+  const saveSchedule = async () => {
+    // iterate over pending entries and save all
+    for (const e of pendingEntries) {
+      await api.post('/schedules', { userId: e.user_id, date: e.date, startTime: e.start_time, endTime: e.end_time, hours: e.hours, locationId: e.location_id, kind: e.kind });
+    }
+    setPendingEntries([]);
+    await loadPreview(form.userId);
+  };
+
+  const resetSchedule = () => {
+    setPendingEntries([]);
   };
 
   // When the manager is composing an entry, reflect it immediately in preview
@@ -71,10 +80,10 @@ export default function AssignShifts() {
   }, [form.userId, form.date, form.startTime, form.endTime, form.hours, form.locationId, form.kind]);
 
   const allForPreview = useMemo(() => {
-    const base = serverSchedules.filter((s) => String(s.user_id) === String(previewUserId));
-    const pending = pendingEntries.filter((s) => String(s.user_id) === String(previewUserId));
+    const base = serverSchedules.filter((s) => String(s.user_id) === String(form.userId));
+    const pending = pendingEntries.filter((s) => String(s.user_id) === String(form.userId));
     return [...base, ...pending];
-  }, [serverSchedules, pendingEntries, previewUserId]);
+  }, [serverSchedules, pendingEntries, form.userId]);
 
   const getLocationName = (id) => locations.find((l) => l.id === id)?.name || '—';
 
@@ -90,6 +99,28 @@ export default function AssignShifts() {
     }
     return Array.from(map.entries());
   }, [allForPreview]);
+
+  const removeEntry = async (entry) => {
+    if (entry.pending) {
+      setPendingEntries((p) => p.filter((e) => e.id !== entry.id));
+    } else {
+      // No delete endpoint for schedules was specified; for demo, just filter locally
+      // In a full implementation, this should call DELETE /api/schedules/:id
+      setServerSchedules((s) => s.filter((x) => x.id !== entry.id));
+    }
+  };
+
+  const removeDay = async (day) => {
+    const entries = weekGrouped.find(([d]) => d === day)?.[1] || [];
+    for (const e of entries) await removeEntry(e);
+  };
+
+  const addLocation = async () => {
+    if (!newLocation.name) return;
+    const { data } = await api.post('/locations', { name: newLocation.name, googleMapsUrl: newLocation.googleMapsUrl });
+    setLocations((prev) => [...prev, data]);
+    setNewLocation({ name: '', googleMapsUrl: '' });
+  };
 
   return (
     <div className="space-y-4">
@@ -135,7 +166,8 @@ export default function AssignShifts() {
           </div>
         </div>
         <div className="mt-4 flex gap-2">
-          <button onClick={save} className="bg-blue-600 text-white px-4 py-2 rounded">Save Schedule</button>
+          <button onClick={saveShift} className="bg-blue-600 text-white px-4 py-2 rounded">Save Shift</button>
+          <button onClick={clearCurrent} className="bg-gray-600 text-white px-4 py-2 rounded">Clear</button>
         </div>
       </Card>
 
@@ -153,34 +185,35 @@ export default function AssignShifts() {
         <div className="mt-4"><button onClick={addLocation} className="bg-gray-700 text-white px-4 py-2 rounded">Add Location</button></div>
       </Card>
 
-      <Card title="Schedule Preview" actions={
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-600">Employee</span>
-          <select className="border rounded px-2 py-1" value={previewUserId} onChange={(e) => setPreviewUserId(e.target.value)}>
-            {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-        </div>
-      }>
+      <Card title="Schedule Preview">
+        <div className="text-sm text-gray-600 mb-2">Employee: {employees.find((e) => String(e.id) === String(form.userId))?.name || '—'}</div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {weekGrouped.length === 0 && (
             <div className="text-sm text-gray-500">No scheduled items this week.</div>
           )}
           {weekGrouped.map(([day, entries]) => (
             <div key={day} className="border rounded p-3 bg-white">
-              <div className="font-semibold mb-2">{day}</div>
+              <div className="font-semibold mb-2 flex items-center justify-between">
+                <span>{day}</span>
+                <button className="text-red-600 text-sm" onClick={() => removeDay(day)}>x</button>
+              </div>
               <div className="space-y-2">
                 {entries.map((s) => (
                   <div key={`${day}-${s.id}`} className={`flex items-center justify-between px-3 py-2 rounded border ${s.pending ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
                     <div className="text-sm">
                       <div className="font-medium">{(s.start_time || '—')} - {(s.end_time || '—')}</div>
-                      <div className="text-xs text-gray-600">{getLocationName(s.location_id)} • {s.kind}</div>
+                      <div className="text-xs text-gray-600">{getLocationName(s.location_id)} • {s.kind} • {new Date(s.date).toLocaleDateString()}</div>
                     </div>
-                    {s.pending && <span className="text-xs text-blue-700">Pending</span>}
+                    <button className="text-red-600" onClick={() => removeEntry(s)}>x</button>
                   </div>
                 ))}
               </div>
             </div>
           ))}
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <button onClick={saveSchedule} className="bg-blue-600 text-white px-4 py-2 rounded">Save Schedule</button>
+          <button onClick={resetSchedule} className="bg-gray-600 text-white px-4 py-2 rounded">Reset Schedule</button>
         </div>
       </Card>
     </div>
