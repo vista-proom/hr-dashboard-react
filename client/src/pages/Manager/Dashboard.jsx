@@ -4,7 +4,12 @@ import api from '../../api';
 
 export default function Dashboard() {
   const [me, setMe] = useState(null);
-  useEffect(() => { api.get('/auth/me').then((r) => setMe(r.data)); }, []);
+  useEffect(() => {
+    const load = async () => { const r = await api.get('/auth/me'); setMe(r.data); };
+    load();
+    const id = setInterval(load, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   return (
     <div className="space-y-4">

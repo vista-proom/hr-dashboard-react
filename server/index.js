@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
+import path from 'path';
 
 import { db } from './src/db.js';
 import authRouter from './src/routes/auth.js';
@@ -28,6 +29,9 @@ app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(cookieParser());
+
+// static for uploads
+app.use('/uploads', express.static(path.resolve('server/uploads')));
 
 // Initialize DB (creates tables and seeds if needed)
 db.init();

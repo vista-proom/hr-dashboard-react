@@ -25,11 +25,27 @@ export default function Profile() {
     setMsg('Password updated');
   };
 
+  const uploadAvatar = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('avatar', file);
+    const { data } = await api.post('/users/me/avatar', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+    setUser({ ...user, ...data });
+    setForm((f) => ({ ...f, avatarUrl: data.avatarUrl || data.profile_url || f.avatarUrl }));
+    setMsg('Profile picture updated');
+  };
+
   return (
     <div className="space-y-4">
       <Card title="My Profile">
         <div className="flex items-start gap-4">
-          <img src={form.avatarUrl || 'https://via.placeholder.com/96'} alt="avatar" className="w-24 h-24 rounded-full border" />
+          <div>
+            <img src={form.avatarUrl || 'https://via.placeholder.com/96'} alt="avatar" className="w-24 h-24 rounded-full border object-cover" />
+            <div className="mt-2">
+              <input type="file" accept="image/*" onChange={uploadAvatar} />
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
             <div>
               <label className="block text-sm mb-1">Name</label>

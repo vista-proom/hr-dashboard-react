@@ -14,7 +14,11 @@ export default function AssignTasks() {
     setLoading(false);
   };
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
+  }, []);
 
   const createTask = async (e) => {
     e.preventDefault();
@@ -22,7 +26,8 @@ export default function AssignTasks() {
     const userId = Number(form.get('userId'));
     const description = form.get('description');
     const dueDate = form.get('dueDate') || null;
-    await api.post('/tasks', { userId, description, dueDate });
+    const name = form.get('name') || '';
+    await api.post('/tasks', { userId, name, description, dueDate });
     e.currentTarget.reset();
     await refresh();
   };
@@ -50,6 +55,10 @@ export default function AssignTasks() {
                 <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Task name</label>
+            <input name="name" className="border rounded px-3 py-2" placeholder="Enter task name" />
           </div>
           <div className="flex-1 min-w-[240px]">
             <label className="block text-sm mb-1">Description</label>
@@ -83,9 +92,10 @@ export default function AssignTasks() {
                     <div className="space-y-2">
                       {(u.tasks || []).map((t) => (
                         <div key={t.task_id} className="flex items-center gap-2">
+                          <input defaultValue={t.name || ''} onBlur={(e) => updateTask(t.task_id, { name: e.target.value })} className="border rounded px-2 py-1 w-48" placeholder="Task name" />
                           <input defaultValue={t.description} onBlur={(e) => updateTask(t.task_id, { description: e.target.value })} className="border rounded px-2 py-1 flex-1" />
                           <input type="date" defaultValue={t.due_date ? t.due_date.substring(0,10) : ''} onChange={(e) => updateTask(t.task_id, { dueDate: e.target.value })} className="border rounded px-2 py-1" />
-                          <select defaultValue={t.status} onChange={(e) => updateTask(t.task_id, { status: e.target.value })} className="border rounded px-2 py-1">
+                          <select defaultValue={t.status} className="border rounded px-2 py-1" onChange={(e) => updateTask(t.task_id, { status: e.target.value })}>
                             {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
                           </select>
                           <button onClick={() => deleteTask(t.task_id)} className="text-red-600">Delete</button>

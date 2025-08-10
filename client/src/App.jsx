@@ -18,6 +18,7 @@ import ManagerDashboard from './pages/Manager/Dashboard.jsx';
 import ManagerShifts from './pages/Manager/Shifts.jsx';
 import ManagerEmployees from './pages/Manager/Employees.jsx';
 import ManagerAssignTasks from './pages/Manager/AssignTasks.jsx';
+import ManagerAssignShifts from './pages/Manager/AssignShifts.jsx';
 import ManagerRequests from './pages/Manager/Requests.jsx';
 
 function Protected({ children, roles }) {
@@ -54,6 +55,7 @@ export default function App() {
               <Route path="shifts" element={<ManagerShifts />} />
               <Route path="employees" element={<ManagerEmployees />} />
               <Route path="assign-tasks" element={<ManagerAssignTasks />} />
+              <Route path="assign-shift" element={<ManagerAssignShifts />} />
               <Route path="requests" element={<ManagerRequests />} />
               <Route path="directory" element={<EmployeeDirectory />} />
             </Route>

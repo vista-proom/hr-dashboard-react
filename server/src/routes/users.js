@@ -1,9 +1,23 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { db } from '../db.js';
 import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
+
+const uploadDir = path.resolve('server/uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.png';
+    cb(null, `avatar_${req.user.id}${ext}`);
+  },
+});
+const upload = multer({ storage });
 
 // Current user's details
 router.get('/me', (req, res) => {
@@ -20,6 +34,13 @@ router.put('/me', (req, res) => {
     linkedin_url: linkedinUrl,
     whatsapp,
   });
+  res.json(updated);
+});
+
+// Upload avatar
+router.post('/me/avatar', upload.single('avatar'), (req, res) => {
+  const relPath = `/uploads/${path.basename(req.file.path)}`;
+  const updated = db.updateUserProfile(req.user.id, { profile_url: relPath });
   res.json(updated);
 });
 

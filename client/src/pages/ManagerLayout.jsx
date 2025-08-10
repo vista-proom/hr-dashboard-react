@@ -6,6 +6,7 @@ const items = [
   { to: '/manager/dashboard', label: 'Dashboard' },
   { to: '/manager/shifts', label: 'Shifts' },
   { to: '/manager/assign-tasks', label: 'Assign Tasks' },
+  { to: '/manager/assign-shift', label: 'Assign Shift' },
   { to: '/manager/employees', label: 'Employees' },
   { to: '/manager/requests', label: 'Employee Requests' },
   { to: '/manager/directory', label: 'Directory' },
