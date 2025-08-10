@@ -7,6 +7,8 @@ const items = [
   { to: '/manager/shifts', label: 'Shifts' },
   { to: '/manager/assign-tasks', label: 'Assign Tasks' },
   { to: '/manager/employees', label: 'Employees' },
+  { to: '/manager/requests', label: 'Employee Requests' },
+  { to: '/manager/directory', label: 'Directory' },
 ];
 
 export default function ManagerLayout() {

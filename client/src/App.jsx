@@ -10,12 +10,15 @@ import EmployeeDashboard from './pages/Employee/Dashboard.jsx';
 import EmployeeShifts from './pages/Employee/Shifts.jsx';
 import EmployeeTasks from './pages/Employee/Tasks.jsx';
 import EmployeeRequests from './pages/Employee/Requests.jsx';
+import EmployeeProfile from './pages/Employee/Profile.jsx';
+import EmployeeDirectory from './pages/Employee/Directory.jsx';
 
 import ManagerLayout from './pages/ManagerLayout.jsx';
 import ManagerDashboard from './pages/Manager/Dashboard.jsx';
 import ManagerShifts from './pages/Manager/Shifts.jsx';
 import ManagerEmployees from './pages/Manager/Employees.jsx';
 import ManagerAssignTasks from './pages/Manager/AssignTasks.jsx';
+import ManagerRequests from './pages/Manager/Requests.jsx';
 
 function Protected({ children, roles }) {
   const { user } = useAuth();
@@ -42,6 +45,8 @@ export default function App() {
               <Route path="shifts" element={<EmployeeShifts />} />
               <Route path="tasks" element={<EmployeeTasks />} />
               <Route path="requests" element={<EmployeeRequests />} />
+              <Route path="profile" element={<EmployeeProfile />} />
+              <Route path="directory" element={<EmployeeDirectory />} />
             </Route>
 
             <Route path="/manager" element={<Protected roles={["Manager"]}><ManagerLayout /></Protected>}>
@@ -49,6 +54,8 @@ export default function App() {
               <Route path="shifts" element={<ManagerShifts />} />
               <Route path="employees" element={<ManagerEmployees />} />
               <Route path="assign-tasks" element={<ManagerAssignTasks />} />
+              <Route path="requests" element={<ManagerRequests />} />
+              <Route path="directory" element={<EmployeeDirectory />} />
             </Route>
           </Routes>
         </div>

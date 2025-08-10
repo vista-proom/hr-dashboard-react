@@ -7,6 +7,8 @@ const items = [
   { to: '/employee/shifts', label: 'Shifts' },
   { to: '/employee/tasks', label: 'Tasks' },
   { to: '/employee/requests', label: 'Requests' },
+  { to: '/employee/profile', label: 'Profile' },
+  { to: '/employee/directory', label: 'Directory' },
 ];
 
 export default function EmployeeLayout() {
