@@ -14,7 +14,11 @@ export default function Tasks() {
     setLoading(false);
   };
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
+  }, []);
 
   const updateStatus = async (taskId, status) => {
     await api.patch(`/tasks/${taskId}/status`, { status });
@@ -37,7 +41,7 @@ export default function Tasks() {
           <tbody>
             {tasks.map((t) => (
               <tr key={t.task_id} className="border-b last:border-0">
-                <td className="py-2">{t.description}</td>
+                <td className="py-2">{t.name || t.description}</td>
                 <td>{t.due_date ? new Date(t.due_date).toLocaleDateString() : '—'}</td>
                 <td>
                   <select value={t.status} onChange={(e) => updateStatus(t.task_id, e.target.value)} className="border rounded px-2 py-1">

@@ -58,8 +58,12 @@ router.put('/me/password', (req, res) => {
   res.json({ ok: true });
 });
 
-// All users stats (Viewer and Manager) and Employees can view basic profiles
+// Users listing
 router.get('/', (req, res) => {
+  if (req.user.role === 'Viewer' || req.user.role === 'Manager') {
+    const data = db.getAllUserStats();
+    return res.json(data);
+  }
   const data = db.listUsers();
   res.json(data);
 });
