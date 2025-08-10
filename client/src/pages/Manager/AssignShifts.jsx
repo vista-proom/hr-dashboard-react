@@ -1,24 +1,48 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Card from '../../components/Card';
+
+const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+function formatDay(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return days[d.getDay()];
+}
 
 export default function AssignShifts() {
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [form, setForm] = useState({ userId: '', date: '', startTime: '', endTime: '', hours: 8, locationId: '', kind: 'Work' });
   const [newLocation, setNewLocation] = useState({ name: '', googleMapsUrl: '' });
+  const [previewUserId, setPreviewUserId] = useState('');
+  const [serverSchedules, setServerSchedules] = useState([]);
+  const [pendingEntries, setPendingEntries] = useState([]); // unsaved shifts
 
   useEffect(() => {
     const run = async () => {
       const [u, l] = await Promise.all([api.get('/users'), api.get('/locations')]);
-      setEmployees(u.data.filter((x) => x.role === 'Employee'));
+      const emps = u.data.filter((x) => x.role === 'Employee');
+      setEmployees(emps);
       setLocations(l.data);
+      if (emps.length && !previewUserId) setPreviewUserId(String(emps[0].id));
     };
     run();
   }, []);
 
+  const loadPreview = async (userId) => {
+    if (!userId) return;
+    const { data } = await api.get(`/schedules/user/${userId}`);
+    setServerSchedules(data);
+  };
+
+  useEffect(() => { loadPreview(previewUserId); }, [previewUserId]);
+
   const save = async () => {
-    await api.post('/schedules', { userId: Number(form.userId), date: form.date, startTime: form.startTime, endTime: form.endTime, hours: Number(form.hours), locationId: form.locationId ? Number(form.locationId) : null, kind: form.kind });
+    if (!form.userId || !form.date) return;
+    const created = await api.post('/schedules', { userId: Number(form.userId), date: form.date, startTime: form.startTime, endTime: form.endTime, hours: Number(form.hours), locationId: form.locationId ? Number(form.locationId) : null, kind: form.kind });
+    // Clear pending that matches this entry
+    setPendingEntries((p) => p.filter((e) => !(e.userId === form.userId && e.date === form.date && e.startTime === form.startTime && e.endTime === form.endTime && e.locationId === form.locationId)));
+    await loadPreview(form.userId);
     alert('Schedule saved');
   };
 
@@ -28,6 +52,44 @@ export default function AssignShifts() {
     setLocations((prev) => [...prev, data]);
     setNewLocation({ name: '', googleMapsUrl: '' });
   };
+
+  // When the manager is composing an entry, reflect it immediately in preview
+  useEffect(() => {
+    if (!form.userId || !form.date) return;
+    const entry = {
+      id: `pending-${form.userId}-${form.date}-${form.startTime}-${form.endTime}-${form.locationId}-${form.kind}`,
+      user_id: Number(form.userId),
+      date: form.date,
+      start_time: form.startTime || null,
+      end_time: form.endTime || null,
+      hours: Number(form.hours) || null,
+      location_id: form.locationId ? Number(form.locationId) : null,
+      kind: form.kind,
+      pending: true,
+    };
+    setPendingEntries([entry]);
+  }, [form.userId, form.date, form.startTime, form.endTime, form.hours, form.locationId, form.kind]);
+
+  const allForPreview = useMemo(() => {
+    const base = serverSchedules.filter((s) => String(s.user_id) === String(previewUserId));
+    const pending = pendingEntries.filter((s) => String(s.user_id) === String(previewUserId));
+    return [...base, ...pending];
+  }, [serverSchedules, pendingEntries, previewUserId]);
+
+  const getLocationName = (id) => locations.find((l) => l.id === id)?.name || '—';
+
+  const weekGrouped = useMemo(() => {
+    const map = new Map();
+    for (const s of allForPreview) {
+      const day = formatDay(s.date);
+      if (!map.has(day)) map.set(day, []);
+      map.get(day).push(s);
+    }
+    for (const day of map.keys()) {
+      map.get(day).sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+    }
+    return Array.from(map.entries());
+  }, [allForPreview]);
 
   return (
     <div className="space-y-4">
@@ -89,6 +151,37 @@ export default function AssignShifts() {
           </div>
         </div>
         <div className="mt-4"><button onClick={addLocation} className="bg-gray-700 text-white px-4 py-2 rounded">Add Location</button></div>
+      </Card>
+
+      <Card title="Schedule Preview" actions={
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-600">Employee</span>
+          <select className="border rounded px-2 py-1" value={previewUserId} onChange={(e) => setPreviewUserId(e.target.value)}>
+            {employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
+      }>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {weekGrouped.length === 0 && (
+            <div className="text-sm text-gray-500">No scheduled items this week.</div>
+          )}
+          {weekGrouped.map(([day, entries]) => (
+            <div key={day} className="border rounded p-3 bg-white">
+              <div className="font-semibold mb-2">{day}</div>
+              <div className="space-y-2">
+                {entries.map((s) => (
+                  <div key={`${day}-${s.id}`} className={`flex items-center justify-between px-3 py-2 rounded border ${s.pending ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+                    <div className="text-sm">
+                      <div className="font-medium">{(s.start_time || '—')} - {(s.end_time || '—')}</div>
+                      <div className="text-xs text-gray-600">{getLocationName(s.location_id)} • {s.kind}</div>
+                    </div>
+                    {s.pending && <span className="text-xs text-blue-700">Pending</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </Card>
     </div>
   );
