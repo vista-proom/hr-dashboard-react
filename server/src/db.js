@@ -17,7 +17,8 @@ function createSchema(database) {
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('Employee','Viewer','Manager')),
-      home_location TEXT DEFAULT 'NYC'
+      home_location TEXT DEFAULT 'NYC',
+      profile_url TEXT
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
@@ -26,7 +27,7 @@ function createSchema(database) {
       description TEXT NOT NULL,
       assigned_by INTEGER,
       due_date TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
+      status TEXT NOT NULL DEFAULT 'Assigned',
       created_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY(assigned_by) REFERENCES users(id)
@@ -45,6 +46,18 @@ function createSchema(database) {
       location TEXT PRIMARY KEY,
       hours INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS shifts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      check_in_time TEXT,
+      check_in_lat REAL,
+      check_in_lng REAL,
+      check_out_time TEXT,
+      check_out_lat REAL,
+      check_out_lng REAL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 }
 
@@ -53,15 +66,16 @@ function seed(database) {
   if (userCount > 0) return; // already seeded
 
   const hash = (pwd) => bcrypt.hashSync(pwd, 10);
+  const avatar = (name) => `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`;
   const insertUser = database.prepare(`
-    INSERT INTO users (name, email, password_hash, role, home_location)
-    VALUES (@name, @email, @password_hash, @role, @home_location)
+    INSERT INTO users (name, email, password_hash, role, home_location, profile_url)
+    VALUES (@name, @email, @password_hash, @role, @home_location, @profile_url)
   `);
 
-  const managerInfo = { name: 'Manny Manager', email: 'manager@acme.com', password_hash: hash('Password123!'), role: 'Manager', home_location: 'NYC' };
-  const viewerInfo = { name: 'Vera Viewer', email: 'viewer@acme.com', password_hash: hash('Password123!'), role: 'Viewer', home_location: 'SF' };
-  const aliceInfo = { name: 'Alice Employee', email: 'alice@acme.com', password_hash: hash('Password123!'), role: 'Employee', home_location: 'NYC' };
-  const bobInfo = { name: 'Bob Employee', email: 'bob@acme.com', password_hash: hash('Password123!'), role: 'Employee', home_location: 'SF' };
+  const managerInfo = { name: 'Manny Manager', email: 'manager@acme.com', password_hash: hash('Password123!'), role: 'Manager', home_location: 'NYC', profile_url: avatar('Manny Manager') };
+  const viewerInfo = { name: 'Vera Viewer', email: 'viewer@acme.com', password_hash: hash('Password123!'), role: 'Viewer', home_location: 'SF', profile_url: avatar('Vera Viewer') };
+  const aliceInfo = { name: 'Alice Employee', email: 'alice@acme.com', password_hash: hash('Password123!'), role: 'Employee', home_location: 'NYC', profile_url: avatar('Alice Employee') };
+  const bobInfo = { name: 'Bob Employee', email: 'bob@acme.com', password_hash: hash('Password123!'), role: 'Employee', home_location: 'SF', profile_url: avatar('Bob Employee') };
 
   const managerId = insertUser.run(managerInfo).lastInsertRowid;
   const viewerId = insertUser.run(viewerInfo).lastInsertRowid;
@@ -83,7 +97,7 @@ function seed(database) {
     description: 'Complete onboarding documents',
     assigned_by: managerId,
     due_date: new Date(Date.now() + 3*24*3600*1000).toISOString(),
-    status: 'in_progress',
+    status: 'In Progress',
     created_at: new Date().toISOString(),
   });
   insertTask.run({
@@ -91,20 +105,21 @@ function seed(database) {
     description: 'Security training module',
     assigned_by: managerId,
     due_date: new Date(Date.now() + 7*24*3600*1000).toISOString(),
-    status: 'pending',
+    status: 'Assigned',
     created_at: new Date().toISOString(),
   });
 
-  // seed one location log for each
-  const insertLog = database.prepare(`
-    INSERT INTO location_logs (user_id, timestamp, latitude, longitude)
-    VALUES (?, ?, ?, ?)
+  // seed a sample shift for each
+  const insertShift = database.prepare(`
+    INSERT INTO shifts (user_id, check_in_time, check_in_lat, check_in_lng, check_out_time, check_out_lat, check_out_lng)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
-  const now = new Date().toISOString();
-  insertLog.run(managerId, now, 40.7128, -74.0060);
-  insertLog.run(viewerId, now, 37.7749, -122.4194);
-  insertLog.run(aliceId, now, 40.7130, -74.0070);
-  insertLog.run(bobId, now, 37.7750, -122.4190);
+  const now = new Date();
+  const earlier = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  insertShift.run(managerId, earlier.toISOString(), 40.7128, -74.0060, now.toISOString(), 40.7138, -74.0050);
+  insertShift.run(viewerId, earlier.toISOString(), 37.7749, -122.4194, now.toISOString(), 37.7759, -122.4184);
+  insertShift.run(aliceId, earlier.toISOString(), 40.7130, -74.0070, null, null, null);
+  insertShift.run(bobId, earlier.toISOString(), 37.7750, -122.4190, now.toISOString(), 37.7755, -122.4185);
 }
 
 function mapUserRow(row, database) {
@@ -117,6 +132,7 @@ function mapUserRow(row, database) {
     role: row.role,
     homeLocation: row.home_location,
     requiredHours: hoursRow ? hoursRow.hours : 8,
+    avatarUrl: row.profile_url || null,
   };
 }
 
@@ -169,7 +185,7 @@ export const db = {
   createTask({ userId, description, assignedBy, dueDate }) {
     const result = this.database.prepare(`
       INSERT INTO tasks (user_id, description, assigned_by, due_date, status, created_at)
-      VALUES (?, ?, ?, ?, 'pending', ?)
+      VALUES (?, ?, ?, ?, 'Assigned', ?)
     `).run(userId, description, assignedBy, dueDate || null, new Date().toISOString());
     return this.database.prepare('SELECT * FROM tasks WHERE task_id = ?').get(result.lastInsertRowid);
   },
@@ -207,5 +223,28 @@ export const db = {
     } else {
       this.database.prepare('INSERT INTO required_hours (location, hours) VALUES (?, ?)').run(location, hours);
     }
-  }
+  },
+  // Shifts
+  createShiftCheckIn(userId, { timestamp, latitude, longitude }) {
+    const result = this.database.prepare(`
+      INSERT INTO shifts (user_id, check_in_time, check_in_lat, check_in_lng)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, timestamp, latitude ?? null, longitude ?? null);
+    return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(result.lastInsertRowid);
+  },
+  getOpenShiftForUser(userId) {
+    return this.database.prepare('SELECT * FROM shifts WHERE user_id = ? AND check_out_time IS NULL ORDER BY id DESC LIMIT 1').get(userId);
+  },
+  checkOutShift(userId, { timestamp, latitude, longitude }) {
+    const open = this.getOpenShiftForUser(userId);
+    if (!open) return null;
+    this.database.prepare(`
+      UPDATE shifts SET check_out_time = ?, check_out_lat = ?, check_out_lng = ?
+      WHERE id = ?
+    `).run(timestamp, latitude ?? null, longitude ?? null, open.id);
+    return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(open.id);
+  },
+  listShiftsForUser(userId) {
+    return this.database.prepare('SELECT * FROM shifts WHERE user_id = ? ORDER BY id DESC').all(userId);
+  },
 };
