@@ -106,7 +106,8 @@ function createSchema(database) {
       end_time TEXT,
       hours INTEGER,
       location_id INTEGER,
-      kind TEXT DEFAULT 'Work', -- Work, DayOff, Annual
+      kind TEXT DEFAULT 'Work',
+      is_draft INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -114,28 +115,15 @@ function createSchema(database) {
     );
   `);
 
-  // Safe migrations for added columns
-  if (!columnExists(database, 'users', 'linkedin_url')) {
-    database.exec(`ALTER TABLE users ADD COLUMN linkedin_url TEXT`);
-  }
-  if (!columnExists(database, 'users', 'whatsapp')) {
-    database.exec(`ALTER TABLE users ADD COLUMN whatsapp TEXT`);
-  }
-  if (!columnExists(database, 'users', 'annual_balance')) {
-    database.exec(`ALTER TABLE users ADD COLUMN annual_balance INTEGER DEFAULT 21`);
-  }
-  if (!columnExists(database, 'users', 'casual_balance')) {
-    database.exec(`ALTER TABLE users ADD COLUMN casual_balance INTEGER DEFAULT 6`);
-  }
-  if (!columnExists(database, 'tasks', 'name')) {
-    database.exec(`ALTER TABLE tasks ADD COLUMN name TEXT`);
-  }
-  if (!columnExists(database, 'tasks', 'last_status_modified_at')) {
-    database.exec(`ALTER TABLE tasks ADD COLUMN last_status_modified_at TEXT`);
-  }
-  if (!columnExists(database, 'tasks', 'modified_by')) {
-    database.exec(`ALTER TABLE tasks ADD COLUMN modified_by INTEGER`);
-  }
+  // Safe migrations
+  if (!columnExists(database, 'users', 'linkedin_url')) database.exec(`ALTER TABLE users ADD COLUMN linkedin_url TEXT`);
+  if (!columnExists(database, 'users', 'whatsapp')) database.exec(`ALTER TABLE users ADD COLUMN whatsapp TEXT`);
+  if (!columnExists(database, 'users', 'annual_balance')) database.exec(`ALTER TABLE users ADD COLUMN annual_balance INTEGER DEFAULT 21`);
+  if (!columnExists(database, 'users', 'casual_balance')) database.exec(`ALTER TABLE users ADD COLUMN casual_balance INTEGER DEFAULT 6`);
+  if (!columnExists(database, 'tasks', 'name')) database.exec(`ALTER TABLE tasks ADD COLUMN name TEXT`);
+  if (!columnExists(database, 'tasks', 'last_status_modified_at')) database.exec(`ALTER TABLE tasks ADD COLUMN last_status_modified_at TEXT`);
+  if (!columnExists(database, 'tasks', 'modified_by')) database.exec(`ALTER TABLE tasks ADD COLUMN modified_by INTEGER`);
+  if (!columnExists(database, 'schedules', 'is_draft')) database.exec(`ALTER TABLE schedules ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 1`);
 }
 
 function seed(database) {
@@ -435,14 +423,44 @@ export const db = {
   },
 
   // Schedules
-  listSchedulesForUser(userId) {
-    return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? ORDER BY date DESC').all(userId);
+  listSchedulesForUser(userId, { includeDraft = true } = {}) {
+    if (includeDraft) {
+      return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? ORDER BY date DESC').all(userId);
+    }
+    return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? AND is_draft = 0 ORDER BY date DESC').all(userId);
   },
-  createSchedule({ userId, date, start_time, end_time, hours, location_id, kind }) {
+  createSchedule({ userId, date, start_time, end_time, hours, location_id, kind, is_draft = 1 }) {
     const now = new Date().toISOString();
-    const r = this.database.prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).
-      run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', now, now);
+    const r = this.database
+      .prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, is_draft, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', is_draft ? 1 : 0, now, now);
     return this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(r.lastInsertRowid);
+  },
+  updateSchedule(id, fields) {
+    const current = this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
+    if (!current) return null;
+    const updated = { ...current, ...fields };
+    const now = new Date().toISOString();
+    this.database.prepare(`UPDATE schedules SET date=@date, start_time=@start_time, end_time=@end_time, hours=@hours, location_id=@location_id, kind=@kind, updated_at=@updated_at WHERE id=@id`).run({
+      id,
+      date: updated.date,
+      start_time: updated.start_time,
+      end_time: updated.end_time,
+      hours: updated.hours,
+      location_id: updated.location_id,
+      kind: updated.kind,
+      updated_at: now,
+    });
+    return this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
+  },
+  publishDraftsForUser(userId) {
+    this.database.prepare('UPDATE schedules SET is_draft = 0, updated_at = ? WHERE user_id = ? AND is_draft = 1').run(new Date().toISOString(), userId);
+  },
+  deleteScheduleById(id) {
+    this.database.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+  },
+  deleteSchedulesByUserAndDate(userId, date) {
+    this.database.prepare('DELETE FROM schedules WHERE user_id = ? AND date = ?').run(userId, date);
   },
   listSchedulesForLocationByDay(date) {
     // aggregate hours per location for a specific date
@@ -450,11 +468,5 @@ export const db = {
   },
   listEmployeesForLocationByDay(locationId, date) {
     return this.database.prepare(`SELECT u.id as user_id, u.name, s.hours FROM schedules s JOIN users u ON u.id = s.user_id WHERE s.location_id = ? AND s.date = ? ORDER BY u.name`).all(locationId, date);
-  },
-  deleteScheduleById(id) {
-    this.database.prepare('DELETE FROM schedules WHERE id = ?').run(id);
-  },
-  deleteSchedulesByUserAndDate(userId, date) {
-    this.database.prepare('DELETE FROM schedules WHERE user_id = ? AND date = ?').run(userId, date);
   },
 };
