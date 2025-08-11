@@ -69,3 +69,6 @@ Backend reads `JWT_SECRET` from `server/.env` if provided. Defaults to a develop
 Notes:
 - If `winget` is not available, the script falls back to Chocolatey if present.
 - If neither is available, please install Node.js LTS manually then re-run the installer.
+
+code instalation : git clone --branch cursor/build-hr-dashboard-with-react-and-nodejs-0462 --single-branch https://github.com/vista-proom/hr-dashboard-react.git
+code instalation : git clone https://github.com/vista-proom/hr-dashboard-react.git
