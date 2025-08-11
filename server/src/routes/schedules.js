@@ -19,4 +19,14 @@ router.post('/', requireRole('Manager'), (req, res) => {
   res.status(201).json(created);
 });
 
+router.delete('/:id', requireRole('Manager'), (req, res) => {
+  db.deleteScheduleById(Number(req.params.id));
+  res.status(204).end();
+});
+
+router.delete('/user/:id/day/:date', requireRole('Manager'), (req, res) => {
+  db.deleteSchedulesByUserAndDate(Number(req.params.id), req.params.date);
+  res.status(204).end();
+});
+
 export default router;

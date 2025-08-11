@@ -440,8 +440,8 @@ export const db = {
   },
   createSchedule({ userId, date, start_time, end_time, hours, location_id, kind }) {
     const now = new Date().toISOString();
-    const r = this.database.prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', now, now);
+    const r = this.database.prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).
+      run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', now, now);
     return this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(r.lastInsertRowid);
   },
   listSchedulesForLocationByDay(date) {
@@ -450,5 +450,11 @@ export const db = {
   },
   listEmployeesForLocationByDay(locationId, date) {
     return this.database.prepare(`SELECT u.id as user_id, u.name, s.hours FROM schedules s JOIN users u ON u.id = s.user_id WHERE s.location_id = ? AND s.date = ? ORDER BY u.name`).all(locationId, date);
+  },
+  deleteScheduleById(id) {
+    this.database.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+  },
+  deleteSchedulesByUserAndDate(userId, date) {
+    this.database.prepare('DELETE FROM schedules WHERE user_id = ? AND date = ?').run(userId, date);
   },
 };

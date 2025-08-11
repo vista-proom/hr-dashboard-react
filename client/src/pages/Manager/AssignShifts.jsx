@@ -58,8 +58,10 @@ export default function AssignShifts() {
     await loadPreview(form.userId);
   };
 
-  const resetSchedule = () => {
+  const resetSchedule = async () => {
+    // Clear pending and server-loaded for the selected user
     setPendingEntries([]);
+    setServerSchedules([]);
   };
 
   // When the manager is composing an entry, reflect it immediately in preview
@@ -104,15 +106,20 @@ export default function AssignShifts() {
     if (entry.pending) {
       setPendingEntries((p) => p.filter((e) => e.id !== entry.id));
     } else {
-      // No delete endpoint for schedules was specified; for demo, just filter locally
-      // In a full implementation, this should call DELETE /api/schedules/:id
+      // Persist delete to backend and update local state
+      await api.delete(`/schedules/${entry.id}`);
       setServerSchedules((s) => s.filter((x) => x.id !== entry.id));
     }
   };
 
   const removeDay = async (day) => {
     const entries = weekGrouped.find(([d]) => d === day)?.[1] || [];
-    for (const e of entries) await removeEntry(e);
+    // If any non-pending entries exist, delete them in backend for the given date
+    const date = entries[0]?.date;
+    if (date) await api.delete(`/schedules/user/${form.userId}/day/${date}`);
+    // Remove from both local server list and pending
+    setServerSchedules((s) => s.filter((x) => formatDay(x.date) !== day));
+    setPendingEntries((p) => p.filter((x) => formatDay(x.date) !== day));
   };
 
   const addLocation = async () => {
