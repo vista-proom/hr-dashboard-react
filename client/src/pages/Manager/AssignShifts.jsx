@@ -43,6 +43,8 @@ export default function AssignShifts() {
   const [pendingEntries, setPendingEntries] = useState([]);
   const [editingWeekKey, setEditingWeekKey] = useState(null);
   const [editingMap, setEditingMap] = useState({}); // id -> edited fields
+  const [showModal, setShowModal] = useState(false);
+  const [modalWeekKey, setModalWeekKey] = useState(null);
 
   useEffect(() => {
     const run = async () => {
@@ -198,6 +200,127 @@ export default function AssignShifts() {
     setEditingMap((m) => ({ ...m, [id]: { ...m[id], [field]: value } }));
   };
 
+  const openSaveModal = () => {
+    if (weeks.length === 0) return;
+    // pick the first (newest) week by default; could be extended to select
+    const key = weeks[0][0];
+    setModalWeekKey(key);
+    setShowModal(true);
+  };
+
+  const closeModal = () => {
+    setShowModal(false);
+    setModalWeekKey(null);
+  };
+
+  const publishModalWeek = async () => {
+    if (!modalWeekKey) return;
+    const startDate = modalWeekKey;
+    const end = new Date(modalWeekKey);
+    end.setDate(end.getDate() + 6);
+    const endDate = end.toISOString().slice(0,10);
+    await api.post(`/schedules/publish-range/${form.userId}`, { startDate, endDate });
+    await loadPreview(form.userId);
+    closeModal();
+  };
+
+  const weekSummary = useMemo(() => {
+    if (!modalWeekKey) return { total: 0, byLocation: {} };
+    const entries = (weeks.find(([k]) => k === modalWeekKey)?.[1] || []).filter((e) => e.pending || e.is_draft === 1);
+    const total = entries.reduce((sum, e) => sum + (e.hours || 0), 0);
+    const byLocation = {};
+    for (const e of entries) {
+      const name = getLocationName(e.location_id);
+      byLocation[name] = (byLocation[name] || 0) + (e.hours || 0);
+    }
+    return { total, byLocation };
+  }, [modalWeekKey, weeks]);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+    if (showModal) window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showModal]);
+
+  const Modal = () => {
+    if (!showModal || !modalWeekKey) return null;
+    const entries = weeks.find(([k]) => k === modalWeekKey)?.[1] || [];
+    // Build day -> slots mapping for table
+    const dayMap = {};
+    for (const d of days) dayMap[d] = [];
+    for (const e of entries) dayMap[formatDay(e.date)].push(e);
+    for (const d of days) dayMap[d].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+
+    return (
+      <div className="fixed inset-0 z-50">
+        <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
+        <div className="absolute inset-0 flex items-center justify-center p-4">
+          <div className="bg-white rounded shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto">
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <div className="font-semibold">Save Schedule — Week of {new Date(modalWeekKey).toLocaleDateString()}</div>
+              <button onClick={closeModal} className="text-sm">Close</button>
+            </div>
+            <div className="p-4 space-y-4">
+              <Card title="Week Summary">
+                <div className="text-sm">Total hours: <span className="font-semibold">{weekSummary.total}h</span></div>
+                <div className="mt-2 text-sm">
+                  <div className="font-medium mb-1">By location</div>
+                  <ul className="list-disc pl-5">
+                    {Object.entries(weekSummary.byLocation).map(([loc, hrs]) => (
+                      <li key={loc}>{loc}: {hrs}h</li>
+                    ))}
+                    {Object.keys(weekSummary.byLocation).length === 0 && <li className="list-none text-gray-500">No locations</li>}
+                  </ul>
+                </div>
+              </Card>
+              <Card title="Schedule Table">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left border-b">
+                        <th className="py-2">Day</th>
+                        <th>Time</th>
+                        <th>Location</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {days.map((d) => (
+                        <tr key={d} className="border-b last:border-0 align-top">
+                          <td className="py-2 w-32">{d}</td>
+                          <td className="w-64">
+                            <div className="space-y-1">
+                              {dayMap[d].map((e, idx) => (
+                                <div key={idx} className="flex items-center gap-2">
+                                  <span>{to12h(e.start_time)} - {to12h(e.end_time)}</span>
+                                </div>
+                              ))}
+                              {dayMap[d].length === 0 && <span className="text-xs text-gray-500">—</span>}
+                            </div>
+                          </td>
+                          <td>
+                            <div className="space-y-1">
+                              {dayMap[d].map((e, idx) => (
+                                <div key={idx} className="px-2 py-1 bg-gray-100 rounded inline-block">{getLocationName(e.location_id) || '—'}</div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+              <div className="flex items-center gap-3">
+                <button onClick={publishModalWeek} className="bg-blue-600 text-white px-4 py-2 rounded">Confirm / Submit</button>
+                <button onClick={closeModal} className="bg-gray-600 text-white px-4 py-2 rounded">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <Card title="Assign Shift">
@@ -345,10 +468,11 @@ export default function AssignShifts() {
           ))}
         </div>
         <div className="mt-4 flex items-center gap-3">
-          <button onClick={saveSchedule} className="bg-blue-600 text-white px-4 py-2 rounded">Save Schedule</button>
+          <button onClick={openSaveModal} className="bg-blue-600 text-white px-4 py-2 rounded">Save Schedule</button>
           <button onClick={resetSchedule} className="bg-gray-600 text-white px-4 py-2 rounded">Reset Schedule</button>
         </div>
       </Card>
+      <Modal />
     </div>
   );
 }

@@ -39,6 +39,13 @@ router.post('/publish/:userId', requireRole('Manager'), (req, res) => {
   res.json({ ok: true });
 });
 
+router.post('/publish-range/:userId', requireRole('Manager'), (req, res) => {
+  const userId = Number(req.params.userId);
+  const { startDate, endDate } = req.body || {};
+  db.publishDraftsForUserRange(userId, startDate, endDate);
+  res.json({ ok: true });
+});
+
 router.delete('/:id', requireRole('Manager'), (req, res) => {
   db.deleteScheduleById(Number(req.params.id));
   res.status(204).end();

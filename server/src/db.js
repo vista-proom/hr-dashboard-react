@@ -456,6 +456,10 @@ export const db = {
   publishDraftsForUser(userId) {
     this.database.prepare('UPDATE schedules SET is_draft = 0, updated_at = ? WHERE user_id = ? AND is_draft = 1').run(new Date().toISOString(), userId);
   },
+  publishDraftsForUserRange(userId, startDate, endDate) {
+    this.database.prepare('UPDATE schedules SET is_draft = 0, updated_at = ? WHERE user_id = ? AND is_draft = 1 AND date >= ? AND date <= ?')
+      .run(new Date().toISOString(), userId, startDate, endDate);
+  },
   deleteScheduleById(id) {
     this.database.prepare('DELETE FROM schedules WHERE id = ?').run(id);
   },
