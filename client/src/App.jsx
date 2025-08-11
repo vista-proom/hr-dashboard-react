@@ -3,9 +3,23 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
 import NavBar from './components/NavBar.jsx';
 import Login from './pages/Login.jsx';
-import EmployeeDashboard from './pages/EmployeeDashboard.jsx';
 import ViewerDashboard from './pages/ViewerDashboard.jsx';
-import ManagerDashboard from './pages/ManagerDashboard.jsx';
+
+import EmployeeLayout from './pages/EmployeeLayout.jsx';
+import EmployeeDashboard from './pages/Employee/Dashboard.jsx';
+import EmployeeShifts from './pages/Employee/Shifts.jsx';
+import EmployeeTasks from './pages/Employee/Tasks.jsx';
+import EmployeeRequests from './pages/Employee/Requests.jsx';
+import EmployeeProfile from './pages/Employee/Profile.jsx';
+import EmployeeDirectory from './pages/Employee/Directory.jsx';
+
+import ManagerLayout from './pages/ManagerLayout.jsx';
+import ManagerDashboard from './pages/Manager/Dashboard.jsx';
+import ManagerShifts from './pages/Manager/Shifts.jsx';
+import ManagerEmployees from './pages/Manager/Employees.jsx';
+import ManagerAssignTasks from './pages/Manager/AssignTasks.jsx';
+import ManagerAssignShifts from './pages/Manager/AssignShifts.jsx';
+import ManagerRequests from './pages/Manager/Requests.jsx';
 
 function Protected({ children, roles }) {
   const { user } = useAuth();
@@ -22,30 +36,29 @@ export default function App() {
         <div className="max-w-6xl mx-auto w-full p-4 flex-1">
           <Routes>
             <Route path="/login" element={<Login />} />
-            <Route
-              path="/"
-              element={
-                <Protected>
-                  <EmployeeDashboard />
-                </Protected>
-              }
-            />
-            <Route
-              path="/viewer"
-              element={
-                <Protected roles={["Viewer", "Manager"]}>
-                  <ViewerDashboard />
-                </Protected>
-              }
-            />
-            <Route
-              path="/manager"
-              element={
-                <Protected roles={["Manager"]}>
-                  <ManagerDashboard />
-                </Protected>
-              }
-            />
+
+            <Route path="/" element={<Protected><Navigate to="/employee/dashboard" /></Protected>} />
+
+            <Route path="/viewer" element={<Protected roles={["Viewer", "Manager"]}><ViewerDashboard /></Protected>} />
+
+            <Route path="/employee" element={<Protected roles={["Employee"]}><EmployeeLayout /></Protected>}>
+              <Route path="dashboard" element={<EmployeeDashboard />} />
+              <Route path="shifts" element={<EmployeeShifts />} />
+              <Route path="tasks" element={<EmployeeTasks />} />
+              <Route path="requests" element={<EmployeeRequests />} />
+              <Route path="profile" element={<EmployeeProfile />} />
+              <Route path="directory" element={<EmployeeDirectory />} />
+            </Route>
+
+            <Route path="/manager" element={<Protected roles={["Manager"]}><ManagerLayout /></Protected>}>
+              <Route path="dashboard" element={<ManagerDashboard />} />
+              <Route path="shifts" element={<ManagerShifts />} />
+              <Route path="employees" element={<ManagerEmployees />} />
+              <Route path="assign-tasks" element={<ManagerAssignTasks />} />
+              <Route path="assign-shift" element={<ManagerAssignShifts />} />
+              <Route path="requests" element={<ManagerRequests />} />
+              <Route path="directory" element={<EmployeeDirectory />} />
+            </Route>
           </Routes>
         </div>
       </div>

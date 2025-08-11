@@ -21,19 +21,10 @@ export function AuthProvider({ children }) {
   }, [token]);
 
   const login = async (email, password) => {
-    const getLocation = () => new Promise((resolve) => {
-      if (!navigator.geolocation) return resolve(null);
-      navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, timestamp: new Date().toISOString() }),
-        () => resolve(null),
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-    });
-
-    const location = await getLocation();
-    const resp = await api.post('/auth/login', { email, password, location });
+    const resp = await api.post('/auth/login', { email, password });
     setToken(resp.data.token);
     setUser(resp.data.user);
+    return resp.data.user;
   };
 
   const logout = () => {
@@ -41,7 +32,16 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const value = useMemo(() => ({ user, token, login, logout, setUser }), [user, token]);
+  const getCurrentLocation = () => new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, timestamp: new Date().toISOString() }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 5000 }
+    );
+  });
+
+  const value = useMemo(() => ({ user, token, login, logout, setUser, getCurrentLocation }), [user, token]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
