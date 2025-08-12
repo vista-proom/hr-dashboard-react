@@ -35,13 +35,25 @@ export function AuthProvider({ children }) {
   const getCurrentLocation = () => new Promise((resolve) => {
     if (!navigator.geolocation) return resolve(null);
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, timestamp: new Date().toISOString() }),
+      (pos) => resolve({ 
+        latitude: pos.coords.latitude, 
+        longitude: pos.coords.longitude, 
+        timestamp: new Date().toISOString() 
+      }),
       () => resolve(null),
-      { enableHighAccuracy: true, timeout: 5000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   });
 
-  const value = useMemo(() => ({ user, token, login, logout, setUser, getCurrentLocation }), [user, token]);
+  const getDeviceType = () => {
+    const userAgent = navigator.userAgent.toLowerCase();
+    if (/mobile|android|iphone|ipad|phone/i.test(userAgent)) {
+      return 'mobile';
+    }
+    return 'desktop';
+  };
+
+  const value = useMemo(() => ({ user, token, login, logout, setUser, getCurrentLocation, getDeviceType }), [user, token]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

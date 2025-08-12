@@ -62,9 +62,12 @@ function createSchema(database) {
       check_in_time TEXT,
       check_in_lat REAL,
       check_in_lng REAL,
+      check_in_location_name TEXT,
       check_out_time TEXT,
       check_out_lat REAL,
       check_out_lng REAL,
+      check_out_location_name TEXT,
+      device_type TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
@@ -95,7 +98,9 @@ function createSchema(database) {
     CREATE TABLE IF NOT EXISTS locations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      google_maps_url TEXT
+      google_maps_url TEXT,
+      latitude REAL,
+      longitude REAL
     );
 
     CREATE TABLE IF NOT EXISTS schedules (
@@ -133,6 +138,11 @@ function createSchema(database) {
   if (!columnExists(database, 'tasks', 'last_status_modified_at')) database.exec(`ALTER TABLE tasks ADD COLUMN last_status_modified_at TEXT`);
   if (!columnExists(database, 'tasks', 'modified_by')) database.exec(`ALTER TABLE tasks ADD COLUMN modified_by INTEGER`);
   if (!columnExists(database, 'schedules', 'is_draft')) database.exec(`ALTER TABLE schedules ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 1`);
+  if (!columnExists(database, 'locations', 'latitude')) database.exec(`ALTER TABLE locations ADD COLUMN latitude REAL`);
+  if (!columnExists(database, 'locations', 'longitude')) database.exec(`ALTER TABLE locations ADD COLUMN longitude REAL`);
+  if (!columnExists(database, 'shifts', 'check_in_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_in_location_name TEXT`);
+  if (!columnExists(database, 'shifts', 'check_out_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_out_location_name TEXT`);
+  if (!columnExists(database, 'shifts', 'device_type')) database.exec(`ALTER TABLE shifts ADD COLUMN device_type TEXT`);
   // schedule_drafts table created above if not exists
 }
 
@@ -356,27 +366,45 @@ export const db = {
   },
 
   // Shifts
-  createShiftCheckIn(userId, { timestamp, latitude, longitude }) {
+  createShiftCheckIn(userId, { timestamp, latitude, longitude, locationName, deviceType }) {
     const result = this.database.prepare(`
-      INSERT INTO shifts (user_id, check_in_time, check_in_lat, check_in_lng)
-      VALUES (?, ?, ?, ?)
-    `).run(userId, timestamp, latitude ?? null, longitude ?? null);
+      INSERT INTO shifts (user_id, check_in_time, check_in_lat, check_in_lng, check_in_location_name, device_type)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, timestamp, latitude ?? null, longitude ?? null, locationName ?? null, deviceType ?? null);
     return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(result.lastInsertRowid);
   },
   getOpenShiftForUser(userId) {
     return this.database.prepare('SELECT * FROM shifts WHERE user_id = ? AND check_out_time IS NULL ORDER BY id DESC LIMIT 1').get(userId);
   },
-  checkOutShift(userId, { timestamp, latitude, longitude }) {
+  checkOutShift(userId, { timestamp, latitude, longitude, locationName }) {
     const open = this.getOpenShiftForUser(userId);
     if (!open) return null;
     this.database.prepare(`
-      UPDATE shifts SET check_out_time = ?, check_out_lat = ?, check_out_lng = ?
+      UPDATE shifts SET check_out_time = ?, check_out_lat = ?, check_out_lng = ?, check_out_location_name = ?
       WHERE id = ?
-    `).run(timestamp, latitude ?? null, longitude ?? null, open.id);
+    `).run(timestamp, latitude ?? null, longitude ?? null, locationName ?? null, open.id);
     return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(open.id);
   },
   listShiftsForUser(userId) {
     return this.database.prepare('SELECT * FROM shifts WHERE user_id = ? ORDER BY id DESC').all(userId);
+  },
+  listShiftsForUserWithLocations(userId) {
+    const shifts = this.database.prepare('SELECT * FROM shifts WHERE user_id = ? ORDER BY id DESC').all(userId);
+    return shifts.map(shift => ({
+      ...shift,
+      check_in_date: shift.check_in_time ? new Date(shift.check_in_time).toLocaleDateString('en-GB') : null,
+      check_in_time_12h: shift.check_in_time ? this.formatTime12h(shift.check_in_time) : null,
+      check_out_date: shift.check_out_time ? new Date(shift.check_out_time).toLocaleDateString('en-GB') : null,
+      check_out_time_12h: shift.check_out_time ? this.formatTime12h(shift.check_out_time) : null,
+    }));
+  },
+  formatTime12h(timestamp) {
+    const date = new Date(timestamp);
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = ((hours + 11) % 12) + 1;
+    return `${displayHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} ${ampm}`;
   },
 
   // Requests
@@ -427,9 +455,39 @@ export const db = {
   listLocations() {
     return this.database.prepare('SELECT * FROM locations ORDER BY name ASC').all();
   },
-  createLocation({ name, google_maps_url }) {
-    const r = this.database.prepare('INSERT INTO locations (name, google_maps_url) VALUES (?, ?)').run(name, google_maps_url || null);
+  createLocation({ name, google_maps_url, latitude, longitude }) {
+    const r = this.database.prepare('INSERT INTO locations (name, google_maps_url, latitude, longitude) VALUES (?, ?, ?, ?)').run(name, google_maps_url || null, latitude || null, longitude || null);
     return this.database.prepare('SELECT * FROM locations WHERE id = ?').get(r.lastInsertRowid);
+  },
+  updateLocationCoordinates(locationId, { latitude, longitude }) {
+    const location = this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
+    if (!location) return null;
+    
+    this.database.prepare('UPDATE locations SET latitude = ?, longitude = ? WHERE id = ?').run(latitude, longitude, locationId);
+    return this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
+  },
+  findNearbyLocation(latitude, longitude, maxDistance = 0.1) {
+    // maxDistance in kilometers (0.1 km = 100 meters)
+    const locations = this.database.prepare('SELECT * FROM locations WHERE latitude IS NOT NULL AND longitude IS NOT NULL').all();
+    
+    for (const location of locations) {
+      const distance = this.calculateDistance(latitude, longitude, location.latitude, location.longitude);
+      if (distance <= maxDistance) {
+        return location;
+      }
+    }
+    return null;
+  },
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    // Haversine formula to calculate distance between two coordinates
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
   },
 
   // Schedules
