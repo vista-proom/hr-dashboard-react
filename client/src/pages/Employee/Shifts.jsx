@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import Card from '../../components/Card';
 import { useAuth } from '../../context/AuthContext';
-import * as XLSX from 'xlsx';
+import { utils as XLSXUtils, writeFileXLSX } from 'xlsx/xlsx.mjs';
 
 const days = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
 function formatDay(dateStr) { const d=new Date(dateStr+'T00:00:00'); return days[(d.getDay()+1)%7]; }
@@ -44,10 +44,10 @@ export default function Shifts() {
       if (dayEntries.length === 0) rows.push([d,'—','—']);
       else for (const e of dayEntries) rows.push([d, `${to12h(e.start_time)} - ${to12h(e.end_time)}`, String(e.location_id||'—')]);
     }
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, 'Schedule');
-    XLSX.writeFile(wb, 'schedule.xlsx');
+    const wb = XLSXUtils.book_new();
+    const ws = XLSXUtils.aoa_to_sheet(rows);
+    XLSXUtils.book_append_sheet(wb, ws, 'Schedule');
+    writeFileXLSX(wb, 'schedule.xlsx');
   };
 
   const exportPDF = () => {
