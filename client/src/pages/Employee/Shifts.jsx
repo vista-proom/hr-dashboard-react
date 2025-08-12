@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import Card from '../../components/Card';
 import { useAuth } from '../../context/AuthContext';
-import { utils as XLSXUtils, writeFile as writeFileXLSX } from 'xlsx';
+// TODO: Re-enable Excel export once xlsx import is resolved with Vite
 
 const days = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
 function formatDay(dateStr) { const d=new Date(dateStr+'T00:00:00'); return days[(d.getDay()+1)%7]; }
@@ -35,20 +35,8 @@ export default function Shifts() {
 
   const weeks = useMemo(() => { const map=new Map(); for(const s of schedule){ const wk=getWeekStart(s.date).toISOString().slice(0,10); if(!map.has(wk)) map.set(wk,[]); map.get(wk).push(s);} const list=Array.from(map.entries()); list.sort((a,b)=>(a[0]<b[0]?1:-1)); return list; }, [schedule]);
 
-  const exportExcel = () => {
-    if (weeks.length === 0) return;
-    const [, entries] = weeks[0];
-    const rows = [['Day','Time','Location']];
-    for (const d of days) {
-      const dayEntries = entries.filter(e=> formatDay(e.date)===d).sort((a,b)=>(a.start_time||'').localeCompare(b.start_time||''));
-      if (dayEntries.length === 0) rows.push([d,'—','—']);
-      else for (const e of dayEntries) rows.push([d, `${to12h(e.start_time)} - ${to12h(e.end_time)}`, String(e.location_id||'—')]);
-    }
-    const wb = XLSXUtils.book_new();
-    const ws = XLSXUtils.aoa_to_sheet(rows);
-    XLSXUtils.book_append_sheet(wb, ws, 'Schedule');
-    writeFileXLSX(wb, 'schedule.xlsx');
-  };
+  // Excel export temporarily disabled
+  // const exportExcel = () => { /* TODO: Re-enable with working xlsx import */ };
 
   const exportPDF = () => {
     if (!scheduleRef.current) return;
@@ -67,7 +55,7 @@ export default function Shifts() {
         <div className="text-sm text-gray-600">Use the buttons above to check in/out with your current location.</div>
       </Card>
 
-      <Card title="My Live Schedule" actions={<div className="space-x-2"><button onClick={exportExcel} className="bg-gray-100 border px-3 py-1 rounded">Export to Excel</button><button onClick={exportPDF} className="bg-gray-800 text-white px-3 py-1 rounded">Export to PDF</button></div>}>
+      <Card title="My Live Schedule" actions={<div className="space-x-2">{/* TODO: Re-enable Excel export button */}<button onClick={exportPDF} className="bg-gray-800 text-white px-3 py-1 rounded">Export to PDF</button></div>}>
         {weeks.length === 0 && <div className="text-sm text-gray-500">No live schedules.</div>}
         {weeks.slice(0,1).map(([weekKey, entries]) => (
           <div key={weekKey} className="space-y-3" ref={scheduleRef}>
