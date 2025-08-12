@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import Card from '../../components/Card';
 import { useAuth } from '../../context/AuthContext';
-import { utils as XLSXUtils, writeFileXLSX } from 'xlsx/xlsx.mjs';
+import { utils as XLSXUtils, writeFile as writeFileXLSX } from 'xlsx';
 
 const days = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'];
 function formatDay(dateStr) { const d=new Date(dateStr+'T00:00:00'); return days[(d.getDay()+1)%7]; }
