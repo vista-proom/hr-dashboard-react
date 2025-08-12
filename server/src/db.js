@@ -62,9 +62,12 @@ function createSchema(database) {
       check_in_time TEXT,
       check_in_lat REAL,
       check_in_lng REAL,
+      check_in_location_name TEXT,
       check_out_time TEXT,
       check_out_lat REAL,
       check_out_lng REAL,
+      check_out_location_name TEXT,
+      device_type TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
@@ -95,7 +98,9 @@ function createSchema(database) {
     CREATE TABLE IF NOT EXISTS locations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      google_maps_url TEXT
+      google_maps_url TEXT,
+      latitude REAL,
+      longitude REAL
     );
 
     CREATE TABLE IF NOT EXISTS schedules (
@@ -106,36 +111,39 @@ function createSchema(database) {
       end_time TEXT,
       hours INTEGER,
       location_id INTEGER,
-      kind TEXT DEFAULT 'Work', -- Work, DayOff, Annual
+      kind TEXT DEFAULT 'Work',
+      is_draft INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY(location_id) REFERENCES locations(id)
     );
+
+    CREATE TABLE IF NOT EXISTS schedule_drafts (
+      user_id INTEGER NOT NULL,
+      week_start TEXT NOT NULL,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, week_start),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 
-  // Safe migrations for added columns
-  if (!columnExists(database, 'users', 'linkedin_url')) {
-    database.exec(`ALTER TABLE users ADD COLUMN linkedin_url TEXT`);
-  }
-  if (!columnExists(database, 'users', 'whatsapp')) {
-    database.exec(`ALTER TABLE users ADD COLUMN whatsapp TEXT`);
-  }
-  if (!columnExists(database, 'users', 'annual_balance')) {
-    database.exec(`ALTER TABLE users ADD COLUMN annual_balance INTEGER DEFAULT 21`);
-  }
-  if (!columnExists(database, 'users', 'casual_balance')) {
-    database.exec(`ALTER TABLE users ADD COLUMN casual_balance INTEGER DEFAULT 6`);
-  }
-  if (!columnExists(database, 'tasks', 'name')) {
-    database.exec(`ALTER TABLE tasks ADD COLUMN name TEXT`);
-  }
-  if (!columnExists(database, 'tasks', 'last_status_modified_at')) {
-    database.exec(`ALTER TABLE tasks ADD COLUMN last_status_modified_at TEXT`);
-  }
-  if (!columnExists(database, 'tasks', 'modified_by')) {
-    database.exec(`ALTER TABLE tasks ADD COLUMN modified_by INTEGER`);
-  }
+  // Safe migrations
+  if (!columnExists(database, 'users', 'linkedin_url')) database.exec(`ALTER TABLE users ADD COLUMN linkedin_url TEXT`);
+  if (!columnExists(database, 'users', 'whatsapp')) database.exec(`ALTER TABLE users ADD COLUMN whatsapp TEXT`);
+  if (!columnExists(database, 'users', 'annual_balance')) database.exec(`ALTER TABLE users ADD COLUMN annual_balance INTEGER DEFAULT 21`);
+  if (!columnExists(database, 'users', 'casual_balance')) database.exec(`ALTER TABLE users ADD COLUMN casual_balance INTEGER DEFAULT 6`);
+  if (!columnExists(database, 'tasks', 'name')) database.exec(`ALTER TABLE tasks ADD COLUMN name TEXT`);
+  if (!columnExists(database, 'tasks', 'last_status_modified_at')) database.exec(`ALTER TABLE tasks ADD COLUMN last_status_modified_at TEXT`);
+  if (!columnExists(database, 'tasks', 'modified_by')) database.exec(`ALTER TABLE tasks ADD COLUMN modified_by INTEGER`);
+  if (!columnExists(database, 'schedules', 'is_draft')) database.exec(`ALTER TABLE schedules ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 1`);
+  if (!columnExists(database, 'locations', 'latitude')) database.exec(`ALTER TABLE locations ADD COLUMN latitude REAL`);
+  if (!columnExists(database, 'locations', 'longitude')) database.exec(`ALTER TABLE locations ADD COLUMN longitude REAL`);
+  if (!columnExists(database, 'shifts', 'check_in_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_in_location_name TEXT`);
+  if (!columnExists(database, 'shifts', 'check_out_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_out_location_name TEXT`);
+  if (!columnExists(database, 'shifts', 'device_type')) database.exec(`ALTER TABLE shifts ADD COLUMN device_type TEXT`);
+  // schedule_drafts table created above if not exists
 }
 
 function seed(database) {
@@ -358,27 +366,45 @@ export const db = {
   },
 
   // Shifts
-  createShiftCheckIn(userId, { timestamp, latitude, longitude }) {
+  createShiftCheckIn(userId, { timestamp, latitude, longitude, locationName, deviceType }) {
     const result = this.database.prepare(`
-      INSERT INTO shifts (user_id, check_in_time, check_in_lat, check_in_lng)
-      VALUES (?, ?, ?, ?)
-    `).run(userId, timestamp, latitude ?? null, longitude ?? null);
+      INSERT INTO shifts (user_id, check_in_time, check_in_lat, check_in_lng, check_in_location_name, device_type)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, timestamp, latitude ?? null, longitude ?? null, locationName ?? null, deviceType ?? null);
     return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(result.lastInsertRowid);
   },
   getOpenShiftForUser(userId) {
     return this.database.prepare('SELECT * FROM shifts WHERE user_id = ? AND check_out_time IS NULL ORDER BY id DESC LIMIT 1').get(userId);
   },
-  checkOutShift(userId, { timestamp, latitude, longitude }) {
+  checkOutShift(userId, { timestamp, latitude, longitude, locationName }) {
     const open = this.getOpenShiftForUser(userId);
     if (!open) return null;
     this.database.prepare(`
-      UPDATE shifts SET check_out_time = ?, check_out_lat = ?, check_out_lng = ?
+      UPDATE shifts SET check_out_time = ?, check_out_lat = ?, check_out_lng = ?, check_out_location_name = ?
       WHERE id = ?
-    `).run(timestamp, latitude ?? null, longitude ?? null, open.id);
+    `).run(timestamp, latitude ?? null, longitude ?? null, locationName ?? null, open.id);
     return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(open.id);
   },
   listShiftsForUser(userId) {
     return this.database.prepare('SELECT * FROM shifts WHERE user_id = ? ORDER BY id DESC').all(userId);
+  },
+  listShiftsForUserWithLocations(userId) {
+    const shifts = this.database.prepare('SELECT * FROM shifts WHERE user_id = ? ORDER BY id DESC').all(userId);
+    return shifts.map(shift => ({
+      ...shift,
+      check_in_date: shift.check_in_time ? new Date(shift.check_in_time).toLocaleDateString('en-GB') : null,
+      check_in_time_12h: shift.check_in_time ? this.formatTime12h(shift.check_in_time) : null,
+      check_out_date: shift.check_out_time ? new Date(shift.check_out_time).toLocaleDateString('en-GB') : null,
+      check_out_time_12h: shift.check_out_time ? this.formatTime12h(shift.check_out_time) : null,
+    }));
+  },
+  formatTime12h(timestamp) {
+    const date = new Date(timestamp);
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = ((hours + 11) % 12) + 1;
+    return `${displayHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} ${ampm}`;
   },
 
   // Requests
@@ -429,20 +455,122 @@ export const db = {
   listLocations() {
     return this.database.prepare('SELECT * FROM locations ORDER BY name ASC').all();
   },
-  createLocation({ name, google_maps_url }) {
-    const r = this.database.prepare('INSERT INTO locations (name, google_maps_url) VALUES (?, ?)').run(name, google_maps_url || null);
+  createLocation({ name, google_maps_url, latitude, longitude }) {
+    const r = this.database.prepare('INSERT INTO locations (name, google_maps_url, latitude, longitude) VALUES (?, ?, ?, ?)').run(name, google_maps_url || null, latitude || null, longitude || null);
     return this.database.prepare('SELECT * FROM locations WHERE id = ?').get(r.lastInsertRowid);
+  },
+  updateLocationCoordinates(locationId, { latitude, longitude }) {
+    const location = this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
+    if (!location) return null;
+    
+    this.database.prepare('UPDATE locations SET latitude = ?, longitude = ? WHERE id = ?').run(latitude, longitude, locationId);
+    return this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
+  },
+  findNearbyLocation(latitude, longitude, maxDistance = 0.1) {
+    // maxDistance in kilometers (0.1 km = 100 meters)
+    const locations = this.database.prepare('SELECT * FROM locations WHERE latitude IS NOT NULL AND longitude IS NOT NULL').all();
+    
+    for (const location of locations) {
+      const distance = this.calculateDistance(latitude, longitude, location.latitude, location.longitude);
+      if (distance <= maxDistance) {
+        return location;
+      }
+    }
+    return null;
+  },
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    // Haversine formula to calculate distance between two coordinates
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
   },
 
   // Schedules
-  listSchedulesForUser(userId) {
-    return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? ORDER BY date DESC').all(userId);
+  listSchedulesForUser(userId, { includeDraft = true } = {}) {
+    if (includeDraft) {
+      return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? ORDER BY date DESC').all(userId);
+    }
+    return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? AND is_draft = 0 ORDER BY date DESC').all(userId);
   },
-  createSchedule({ userId, date, start_time, end_time, hours, location_id, kind }) {
+  createSchedule({ userId, date, start_time, end_time, hours, location_id, kind, is_draft = 1 }) {
     const now = new Date().toISOString();
-    const r = this.database.prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', now, now);
+    const r = this.database
+      .prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, is_draft, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', is_draft ? 1 : 0, now, now);
     return this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(r.lastInsertRowid);
+  },
+  updateSchedule(id, fields) {
+    const current = this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
+    if (!current) return null;
+    const updated = { ...current, ...fields };
+    const now = new Date().toISOString();
+    this.database.prepare(`UPDATE schedules SET date=@date, start_time=@start_time, end_time=@end_time, hours=@hours, location_id=@location_id, kind=@kind, updated_at=@updated_at WHERE id=@id`).run({
+      id,
+      date: updated.date,
+      start_time: updated.start_time,
+      end_time: updated.end_time,
+      hours: updated.hours,
+      location_id: updated.location_id,
+      kind: updated.kind,
+      updated_at: now,
+    });
+    return this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(id);
+  },
+  publishDraftsForUser(userId) {
+    this.database.prepare('UPDATE schedules SET is_draft = 0, updated_at = ? WHERE user_id = ? AND is_draft = 1').run(new Date().toISOString(), userId);
+  },
+  publishDraftsForUserRange(userId, startDate, endDate) {
+    this.database.prepare('UPDATE schedules SET is_draft = 0, updated_at = ? WHERE user_id = ? AND is_draft = 1 AND date >= ? AND date <= ?')
+      .run(new Date().toISOString(), userId, startDate, endDate);
+  },
+  saveScheduleDraft(userId, weekStart, entries) {
+    const data = JSON.stringify(entries || []);
+    const now = new Date().toISOString();
+    this.database.prepare('INSERT INTO schedule_drafts (user_id, week_start, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, week_start) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at')
+      .run(userId, weekStart, data, now);
+  },
+  getScheduleDraft(userId, weekStart) {
+    const row = this.database.prepare('SELECT data FROM schedule_drafts WHERE user_id = ? AND week_start = ?').get(userId, weekStart);
+    if (!row) return [];
+    try { return JSON.parse(row.data) || []; } catch { return []; }
+  },
+  deleteScheduleDraft(userId, weekStart) {
+    this.database.prepare('DELETE FROM schedule_drafts WHERE user_id = ? AND week_start = ?').run(userId, weekStart);
+  },
+  finalizeScheduleDraft(userId, weekStart) {
+    // compute endDate = weekStart + 6
+    const start = new Date(weekStart);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const endDate = end.toISOString().slice(0,10);
+    const entries = this.getScheduleDraft(userId, weekStart);
+    // remove existing live schedules for range
+    this.database.prepare('DELETE FROM schedules WHERE user_id = ? AND date >= ? AND date <= ?').run(userId, weekStart, endDate);
+    // insert as live
+    for (const e of entries) {
+      this.createSchedule({
+        userId,
+        date: e.date,
+        start_time: e.start_time,
+        end_time: e.end_time,
+        hours: e.hours,
+        location_id: e.location_id,
+        kind: e.kind || 'Work',
+        is_draft: 0,
+      });
+    }
+    this.deleteScheduleDraft(userId, weekStart);
+  },
+  deleteScheduleById(id) {
+    this.database.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+  },
+  deleteSchedulesByUserAndDate(userId, date) {
+    this.database.prepare('DELETE FROM schedules WHERE user_id = ? AND date = ?').run(userId, date);
   },
   listSchedulesForLocationByDay(date) {
     // aggregate hours per location for a specific date
