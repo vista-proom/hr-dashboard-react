@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import Card from '../../components/Card';
 
@@ -7,23 +7,15 @@ const days = ['Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Fri
 function getWeekStart(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   const day = d.getDay();
-  // Convert to Saturday=0..Friday=6
-  const shift = (day + 1) % 7; // Sun->1, Sat->0
-  const diff = shift; // days since Saturday
+  const shift = (day + 1) % 7; // Saturday=0
   const start = new Date(d);
-  start.setDate(d.getDate() - diff);
+  start.setDate(d.getDate() - shift);
   return start;
 }
 
 function formatDay(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
-  // Saturday first
   return days[(d.getDay() + 1) % 7];
-}
-
-function formatDayLabel(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  return `${formatDay(dateStr)} ${d.getDate()}/${d.getMonth()+1}`;
 }
 
 function to12h(t) {
@@ -34,18 +26,31 @@ function to12h(t) {
   return `${hh}:${String(m ?? 0).padStart(2,'0')} ${am ? 'AM' : 'PM'}`;
 }
 
+function minutesBetween(start, end) {
+  if (!start || !end) return 0;
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  const s = sh * 60 + sm;
+  const e = eh * 60 + em;
+  let diff = e - s;
+  if (diff < 0) diff += 24 * 60; // cross midnight
+  return diff;
+}
+
 export default function AssignShifts() {
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
-  const [form, setForm] = useState({ userId: '', date: '', startTime: '', endTime: '', hours: 8, locationId: '', kind: 'Work' });
-  const [newLocation, setNewLocation] = useState({ name: '', googleMapsUrl: '' });
+  const [form, setForm] = useState({ userId: '', date: '', startTime: '', endTime: '', hours: 0, locationId: '', kind: 'Work' });
   const [serverSchedules, setServerSchedules] = useState([]);
   const [pendingEntries, setPendingEntries] = useState([]);
   const [editingWeekKey, setEditingWeekKey] = useState(null);
-  const [editingMap, setEditingMap] = useState({}); // id -> edited fields
+  const [editingMap, setEditingMap] = useState({});
   const [showModal, setShowModal] = useState(false);
   const [modalWeekKey, setModalWeekKey] = useState(null);
-  const [draftByWeek, setDraftByWeek] = useState({}); // weekKey -> entries array
+  const [draftByWeek, setDraftByWeek] = useState({});
+  const [viewOld, setViewOld] = useState(false);
+  const [toast, setToast] = useState({ show: false, text: '' });
+  const modalContentRef = useRef(null);
 
   useEffect(() => {
     const run = async () => {
@@ -65,11 +70,18 @@ export default function AssignShifts() {
   };
   useEffect(() => { loadPreview(form.userId); }, [form.userId]);
 
-  // Load draft for current user and current week on employee change
+  // auto-calc hours display
+  const computedMinutes = useMemo(() => minutesBetween(form.startTime, form.endTime), [form.startTime, form.endTime]);
+  const computedHoursLabel = useMemo(() => `${Math.floor(computedMinutes/60)}h ${computedMinutes%60}m`, [computedMinutes]);
+  useEffect(() => {
+    // store rounded hours for backend
+    setForm((f) => ({ ...f, hours: Math.round(computedMinutes/60) }));
+  }, [computedMinutes]);
+
+  // load draft for current user & newest week
   useEffect(() => {
     const load = async () => {
       if (!form.userId) return;
-      // pick newest week key from serverSchedules or today's week
       const todayKey = getWeekStart(new Date().toISOString().slice(0,10)).toISOString().slice(0,10);
       let key = todayKey;
       if (serverSchedules.length > 0) {
@@ -86,27 +98,46 @@ export default function AssignShifts() {
   }, [form.userId, serverSchedules]);
 
   const clearCurrent = () => {
-    setForm((f) => ({ ...f, date: '', startTime: '', endTime: '', hours: 8, locationId: '', kind: 'Work' }));
+    setForm((f) => ({ ...f, date: '', startTime: '', endTime: '', locationId: '', kind: 'Work' }));
     setPendingEntries([]);
+  };
+
+  const showToast = (text) => {
+    setToast({ show: true, text });
+    setTimeout(() => setToast({ show: false, text: '' }), 10000);
   };
 
   const saveShift = async () => {
     if (!form.userId || !form.date) return;
-    await api.post('/schedules', { userId: Number(form.userId), date: form.date, startTime: form.startTime, endTime: form.endTime, hours: Number(form.hours), locationId: form.locationId ? Number(form.locationId) : null, kind: form.kind });
+    await api.post('/schedules', { userId: Number(form.userId), date: form.date, startTime: form.startTime, endTime: form.endTime, hours: Math.round(computedMinutes/60), locationId: form.locationId ? Number(form.locationId) : null, kind: form.kind });
     setPendingEntries([]);
     await loadPreview(form.userId);
     clearCurrent();
+    showToast('Shift Added Successfully');
   };
 
-  const saveSchedule = async () => {
-    // publish all drafts for the user
-    await api.post(`/schedules/publish/${form.userId}`);
+  const saveDraftWeek = async (weekKey) => {
+    const entries = draftByWeek[weekKey] || [];
+    await api.post('/schedules/draft', { userId: Number(form.userId), weekStart: weekKey, entries });
+  };
+
+  const openSaveModal = () => {
+    if (weeks.length === 0) return;
+    const key = weeks[0][0];
+    setModalWeekKey(key);
+    setShowModal(true);
+  };
+
+  const closeModal = () => { setShowModal(false); setModalWeekKey(null); };
+
+  const publishModalWeek = async () => {
+    if (!modalWeekKey) return;
+    await saveDraftWeek(modalWeekKey);
+    await api.post('/schedules/finalize', { userId: Number(form.userId), weekStart: modalWeekKey });
     await loadPreview(form.userId);
-  };
-
-  const resetSchedule = async () => {
-    setPendingEntries([]);
-    setServerSchedules([]);
+    setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
+    closeModal();
+    showToast('Schedule Updated');
   };
 
   // live pending reflection
@@ -118,21 +149,19 @@ export default function AssignShifts() {
       date: form.date,
       start_time: form.startTime || null,
       end_time: form.endTime || null,
-      hours: Number(form.hours) || null,
+      hours: Math.round(computedMinutes/60),
       location_id: form.locationId ? Number(form.locationId) : null,
       kind: form.kind,
       pending: true,
     };
     setPendingEntries([entry]);
-  }, [form.userId, form.date, form.startTime, form.endTime, form.hours, form.locationId, form.kind]);
+  }, [form.userId, form.date, form.startTime, form.endTime, form.locationId, form.kind, computedMinutes]);
 
-  // month filter (current month, include overlapping weeks)
+  // current month filter
   const currentMonth = new Date().getMonth();
-  const inCurrentMonth = (dateStr) => {
-    const d = new Date(dateStr + 'T00:00:00');
-    return d.getMonth() === currentMonth;
-  };
+  const inCurrentMonth = (dateStr) => new Date(dateStr + 'T00:00:00').getMonth() === currentMonth;
 
+  // Week data
   const allForPreview = useMemo(() => {
     const base = serverSchedules.filter((s) => String(s.user_id) === String(form.userId));
     const pending = pendingEntries.filter((s) => String(s.user_id) === String(form.userId));
@@ -140,22 +169,18 @@ export default function AssignShifts() {
   }, [serverSchedules, pendingEntries, form.userId]);
 
   const weeks = useMemo(() => {
-    // group by week start (Saturday)
     const map = new Map();
-    for (const s of allForPreview) {
+    // include only drafts or all depending on toggle
+    const filtered = allForPreview.filter((e) => viewOld || e.pending || e.is_draft === 1);
+    for (const s of filtered) {
       const wkStart = getWeekStart(s.date);
       const key = wkStart.toISOString().slice(0,10);
       if (!map.has(key)) map.set(key, []);
       map.get(key).push(s);
     }
-    // Only include weeks if any entry is in current month
-    const filtered = Array.from(map.entries()).filter(([key, entries]) =>
-      entries.some((e) => inCurrentMonth(e.date))
-    );
-    // sort weeks: newest first
-    filtered.sort((a, b) => (a[0] < b[0] ? 1 : -1));
-    // within week: sort days Saturday->Friday and time ascending
-    return filtered.map(([key, entries]) => {
+    const list = Array.from(map.entries()).filter(([k, entries]) => entries.some((e) => inCurrentMonth(e.date)));
+    list.sort((a, b) => (a[0] < b[0] ? 1 : -1));
+    return list.map(([key, entries]) => {
       const sorted = entries.slice().sort((a, b) => {
         const da = (new Date(a.date + 'T00:00:00').getDay() + 1) % 7;
         const db = (new Date(b.date + 'T00:00:00').getDay() + 1) % 7;
@@ -164,28 +189,17 @@ export default function AssignShifts() {
       });
       return [key, sorted];
     });
-  }, [allForPreview]);
-
-  const currentWeeks = useMemo(() => weeks, [weeks]);
-
-  // Helper to get working set (server + draft overrides)
-  const getWeekEntries = (weekKey) => {
-    const serverEntries = currentWeeks.find(([k]) => k === weekKey)?.[1] || [];
-    const draftEntries = draftByWeek[weekKey] || [];
-    // merge: drafts replace same date/time or add new; for simplicity, append
-    return [...serverEntries, ...draftEntries.map((e) => ({ ...e, pending: true }))];
-  };
-
-  const saveDraftWeek = async (weekKey) => {
-    const entries = draftByWeek[weekKey] || [];
-    await api.post('/schedules/draft', { userId: Number(form.userId), weekStart: weekKey, entries });
-  };
+  }, [allForPreview, viewOld]);
 
   const getLocationName = (id) => locations.find((l) => l.id === id)?.name || '—';
 
   const removeEntry = async (entry) => {
     if (entry.pending) {
       setPendingEntries((p) => p.filter((e) => e.id !== entry.id));
+    } else if (entry.is_draft === 1) {
+      const wk = getWeekStart(entry.date).toISOString().slice(0,10);
+      setDraftByWeek((m) => ({ ...m, [wk]: (m[wk] || []).filter((e) => e.tempId !== entry.tempId && !(e.date === entry.date && e.start_time === entry.start_time && e.end_time === entry.end_time && e.location_id === entry.location_id)) }));
+      await saveDraftWeek(wk);
     } else {
       await api.delete(`/schedules/${entry.id}`);
       setServerSchedules((s) => s.filter((x) => x.id !== entry.id));
@@ -193,172 +207,83 @@ export default function AssignShifts() {
   };
 
   const removeDay = async (day, entries) => {
-    const date = entries[0]?.date;
-    if (date) await api.delete(`/schedules/user/${form.userId}/day/${date}`);
-    setServerSchedules((s) => s.filter((x) => formatDay(x.date) !== day));
+    // for drafts
+    const wk = entries[0] ? getWeekStart(entries[0].date).toISOString().slice(0,10) : null;
+    if (wk && entries.some((e) => e.is_draft === 1)) {
+      setDraftByWeek((m) => ({ ...m, [wk]: (m[wk] || []).filter((e) => formatDay(e.date) !== day) }));
+      await saveDraftWeek(wk);
+    }
+    // for pending
     setPendingEntries((p) => p.filter((x) => formatDay(x.date) !== day));
+    // for live
+    if (entries.some((e) => !e.pending && e.is_draft !== 1)) {
+      const date = entries.find((e) => !e.pending && e.is_draft !== 1)?.date;
+      if (date) await api.delete(`/schedules/user/${form.userId}/day/${date}`);
+      setServerSchedules((s) => s.filter((x) => formatDay(x.date) !== day));
+    }
   };
 
-  const totalHoursForDay = (entries, date) => entries.filter((e) => e.date === date).reduce((sum, e) => sum + (e.hours || 0), 0);
+  const totalMinutesForDay = (entries, date) => entries.filter((e) => e.date === date).reduce((sum, e) => sum + minutesBetween(e.start_time, e.end_time), 0);
 
   const startEditWeek = (weekKey) => {
     setEditingWeekKey(weekKey);
     const map = {};
-    for (const s of (weeks.find(([k]) => k === weekKey)?.[1] || [])) {
-      if (!s.pending) map[s.id] = { ...s };
+    const entries = getWeekEntries(weekKey);
+    for (const s of entries) {
+      if (!s.pending) map[s.id || s.tempId || `${s.date}-${s.start_time}`] = { ...s };
     }
     setEditingMap(map);
   };
 
-  const cancelEditWeek = () => {
-    setEditingWeekKey(null);
-    setEditingMap({});
-  };
+  const cancelEditWeek = () => { setEditingWeekKey(null); setEditingMap({}); };
 
   const submitEditWeek = async () => {
-    const updates = Object.values(editingMap);
-    for (const u of updates) {
-      await api.put(`/schedules/${u.id}`, {
-        date: u.date,
-        startTime: u.start_time,
-        endTime: u.end_time,
-        hours: u.hours,
-        locationId: u.location_id,
-        kind: u.kind,
-      });
+    for (const key of Object.keys(editingMap)) {
+      const u = editingMap[key];
+      if (u.is_draft === 1 && !u.id) {
+        const wk = getWeekStart(u.date).toISOString().slice(0,10);
+        setDraftByWeek((m) => ({ ...m, [wk]: (m[wk] || []).map((e) => (e.tempId === u.tempId ? u : e)) }));
+        await saveDraftWeek(wk);
+      } else if (u.id) {
+        await api.put(`/schedules/${u.id}`, { date: u.date, startTime: u.start_time, endTime: u.end_time, hours: Math.round(minutesBetween(u.start_time, u.end_time)/60), locationId: u.location_id, kind: u.kind });
+      }
     }
-    setEditingWeekKey(null);
-    setEditingMap({});
-    await loadPreview(form.userId);
+    setEditingWeekKey(null); setEditingMap({}); await loadPreview(form.userId);
   };
 
-  const setEdit = (id, field, value) => {
-    setEditingMap((m) => ({ ...m, [id]: { ...m[id], [field]: value } }));
+  const setEdit = (id, field, value) => { setEditingMap((m) => ({ ...m, [id]: { ...m[id], [field]: value } })); };
+
+  const getWeekEntries = (weekKey) => {
+    const serverEntries = weeks.find(([k]) => k === weekKey)?.[1] || [];
+    const draftEntries = draftByWeek[weekKey] || [];
+    return [...serverEntries, ...draftEntries.map((e, idx) => ({ ...e, is_draft: 1, tempId: idx }))];
   };
 
-  const openSaveModal = () => {
-    if (weeks.length === 0) return;
-    // pick the first (newest) week by default; could be extended to select
-    const key = weeks[0][0];
-    setModalWeekKey(key);
-    setShowModal(true);
-  };
-
-  const closeModal = () => {
-    setShowModal(false);
-    setModalWeekKey(null);
-  };
-
-  // On Save Schedule popup confirm, finalize from draft
-  const publishModalWeek = async () => {
-    if (!modalWeekKey) return;
-    await saveDraftWeek(modalWeekKey);
-    await api.post('/schedules/finalize', { userId: Number(form.userId), weekStart: modalWeekKey });
-    await loadPreview(form.userId);
-    setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
-    closeModal();
-  };
-
-  const weekSummary = useMemo(() => {
-    if (!modalWeekKey) return { total: 0, byLocation: {} };
-    const entries = (weeks.find(([k]) => k === modalWeekKey)?.[1] || []).filter((e) => e.pending || e.is_draft === 1);
-    const total = entries.reduce((sum, e) => sum + (e.hours || 0), 0);
-    const byLocation = {};
-    for (const e of entries) {
-      const name = getLocationName(e.location_id);
-      byLocation[name] = (byLocation[name] || 0) + (e.hours || 0);
-    }
-    return { total, byLocation };
-  }, [modalWeekKey, weeks]);
-
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
-    if (showModal) window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [showModal]);
-
-  const Modal = () => {
-    if (!showModal || !modalWeekKey) return null;
-    const entries = weeks.find(([k]) => k === modalWeekKey)?.[1] || [];
-    // Build day -> slots mapping for table
-    const dayMap = {};
-    for (const d of days) dayMap[d] = [];
-    for (const e of entries) dayMap[formatDay(e.date)].push(e);
-    for (const d of days) dayMap[d].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
-
-    return (
-      <div className="fixed inset-0 z-50">
-        <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
-        <div className="absolute inset-0 flex items-center justify-center p-4">
-          <div className="bg-white rounded shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto">
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <div className="font-semibold">Save Schedule — Week of {new Date(modalWeekKey).toLocaleDateString()}</div>
-              <button onClick={closeModal} className="text-sm">Close</button>
-            </div>
-            <div className="p-4 space-y-4">
-              <Card title="Week Summary">
-                <div className="text-sm">Total hours: <span className="font-semibold">{weekSummary.total}h</span></div>
-                <div className="mt-2 text-sm">
-                  <div className="font-medium mb-1">By location</div>
-                  <ul className="list-disc pl-5">
-                    {Object.entries(weekSummary.byLocation).map(([loc, hrs]) => (
-                      <li key={loc}>{loc}: {hrs}h</li>
-                    ))}
-                    {Object.keys(weekSummary.byLocation).length === 0 && <li className="list-none text-gray-500">No locations</li>}
-                  </ul>
-                </div>
-              </Card>
-              <Card title="Schedule Table">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left border-b">
-                        <th className="py-2">Day</th>
-                        <th>Time</th>
-                        <th>Location</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {days.map((d) => (
-                        <tr key={d} className="border-b last:border-0 align-top">
-                          <td className="py-2 w-32">{d}</td>
-                          <td className="w-64">
-                            <div className="space-y-1">
-                              {dayMap[d].map((e, idx) => (
-                                <div key={idx} className="flex items-center gap-2">
-                                  <span>{to12h(e.start_time)} - {to12h(e.end_time)}</span>
-                                </div>
-                              ))}
-                              {dayMap[d].length === 0 && <span className="text-xs text-gray-500">—</span>}
-                            </div>
-                          </td>
-                          <td>
-                            <div className="space-y-1">
-                              {dayMap[d].map((e, idx) => (
-                                <div key={idx} className="px-2 py-1 bg-gray-100 rounded inline-block">{getLocationName(e.location_id) || '—'}</div>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-              <div className="flex items-center gap-3">
-                <button onClick={publishModalWeek} className="bg-blue-600 text-white px-4 py-2 rounded">Confirm / Submit</button>
-                <button onClick={closeModal} className="bg-gray-600 text-white px-4 py-2 rounded">Cancel</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+  const downloadPDF = () => {
+    if (!modalContentRef.current) return;
+    const html = modalContentRef.current.innerHTML;
+    const w = window.open('', '_blank');
+    if (!w) return;
+    w.document.write(`<!doctype html><html><head><title>Schedule</title><style>body{font-family:sans-serif;padding:16px} table{width:100%;border-collapse:collapse} th,td{border-bottom:1px solid #e5e7eb;padding:6px;text-align:left} .title{font-weight:600;margin-bottom:8px}</style></head><body>${html}</body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+    w.close();
   };
 
   return (
     <div className="space-y-4">
-      <Card title="Assign Shift">
+      {toast.show && (
+        <div className="fixed top-4 right-4 bg-green-100 text-gray-700 px-4 py-2 rounded shadow z-50">
+          <div>{toast.text}</div>
+          <div className="h-1 bg-green-500 mt-2 animate-[grow_10s_linear_forwards]" style={{ width: '100%' }} />
+          <style>{`@keyframes grow{from{width:0}to{width:100%}}`}</style>
+        </div>
+      )}
+
+      <Card title="Assign Shift" actions={
+        <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" className="accent-blue-600" checked={viewOld} onChange={(e) => setViewOld(e.target.checked)} /> View Old Schedules</label>
+      }>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm mb-1">Employee</label>
@@ -373,7 +298,7 @@ export default function AssignShifts() {
           </div>
           <div>
             <label className="block text-sm mb-1">Working Hours</label>
-            <input type="number" min={0} className="w-full border rounded px-3 py-2" value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value })} />
+            <input className="w-full border rounded px-3 py-2 bg-gray-100 text-gray-600" value={computedHoursLabel} disabled readOnly />
           </div>
           <div>
             <label className="block text-sm mb-1">Start Time</label>
@@ -405,113 +330,146 @@ export default function AssignShifts() {
         </div>
       </Card>
 
-      <Card title="Add New Location">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm mb-1">Location Name</label>
-            <input className="w-full border rounded px-3 py-2" value={newLocation.name} onChange={(e) => setNewLocation({ ...newLocation, name: e.target.value })} />
-          </div>
-          <div className="md:col-span-2">
-            <label className="block text-sm mb-1">Google Maps URL</label>
-            <input className="w-full border rounded px-3 py-2" value={newLocation.googleMapsUrl} onChange={(e) => setNewLocation({ ...newLocation, googleMapsUrl: e.target.value })} />
-          </div>
-        </div>
-        <div className="mt-4"><button onClick={async () => {
-          if (!newLocation.name) return;
-          const { data } = await api.post('/locations', { name: newLocation.name, googleMapsUrl: newLocation.googleMapsUrl });
-          setLocations((prev) => [...prev, data]);
-          setNewLocation({ name: '', googleMapsUrl: '' });
-        }} className="bg-gray-700 text-white px-4 py-2 rounded">Add Location</button></div>
-      </Card>
-
       <Card title="Schedule Preview">
         <div className="text-sm text-gray-600 mb-2">Employee: {employees.find((e) => String(e.id) === String(form.userId))?.name || '—'}</div>
         <div className="space-y-4">
           {weeks.length === 0 && <div className="text-sm text-gray-500">No scheduled items this month.</div>}
-          {weeks.map(([weekKey, entries]) => (
-            <div key={weekKey} className="border rounded p-3 bg-white">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-semibold">Week of {new Date(weekKey).toLocaleDateString()}</div>
-                {editingWeekKey === weekKey ? (
-                  <div className="space-x-2">
-                    <button onClick={submitEditWeek} className="bg-blue-600 text-white px-3 py-1 rounded text-sm">Submit</button>
-                    <button onClick={cancelEditWeek} className="bg-gray-600 text-white px-3 py-1 rounded text-sm">Cancel</button>
-                  </div>
-                ) : (
-                  <button onClick={() => startEditWeek(weekKey)} className="text-sm text-blue-700">✎ Edit</button>
-                )}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {days.map((dayName) => {
-                  const dayEntries = entries.filter((e) => formatDay(e.date) === dayName);
-                  if (dayEntries.length === 0) return (
-                    <div key={dayName} className="border rounded px-3 py-2 bg-gray-50 opacity-70">
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="text-sm">{dayName}</div>
-                        <span className="text-xs text-gray-500">0h</span>
-                      </div>
-                      <div className="text-xs text-gray-400">No shifts</div>
+          {weeks.map(([weekKey, entries]) => {
+            const merged = getWeekEntries(weekKey);
+            return (
+              <div key={weekKey} className="border rounded p-3 bg-white">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold">Week of {new Date(weekKey).toLocaleDateString()}</div>
+                  {editingWeekKey === weekKey ? (
+                    <div className="space-x-2">
+                      <button onClick={submitEditWeek} className="bg-blue-600 text-white px-3 py-1 rounded text-sm">Submit</button>
+                      <button onClick={cancelEditWeek} className="bg-gray-600 text-white px-3 py-1 rounded text-sm">Cancel</button>
                     </div>
-                  );
-                  const anyPending = dayEntries.some((e) => e.pending);
-                  const total = totalHoursForDay(entries, dayEntries[0].date);
-                  return (
-                    <div key={dayName} className={`border rounded px-3 py-2 ${anyPending ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'} ${editingWeekKey === weekKey ? '' : 'opacity-70'}`}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="text-sm font-medium">
-                          {dayName} <span className="font-normal text-gray-600">{new Date(dayEntries[0].date).getDate()}/{new Date(dayEntries[0].date).getMonth()+1}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-600">{total}h</span>
-                          {editingWeekKey === weekKey && (
-                            <button className="text-red-600 text-sm" onClick={() => removeDay(dayName, dayEntries)}>x</button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        {dayEntries.map((s) => (
-                          <div key={`${dayName}-${s.id}`} className="flex items-center justify-between">
-                            {editingWeekKey === weekKey && !s.pending ? (
-                              <div className="flex items-center gap-2 flex-1">
-                                <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id]?.start_time || s.start_time || ''} onChange={(e) => setEdit(s.id, 'start_time', e.target.value)} />
-                                <span className="text-xs text-gray-500">to</span>
-                                <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id]?.end_time || s.end_time || ''} onChange={(e) => setEdit(s.id, 'end_time', e.target.value)} />
-                                <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id]?.location_id || s.location_id || ''} onChange={(e) => setEdit(s.id, 'location_id', Number(e.target.value))}>
-                                  <option value="">—</option>
-                                  {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                                </select>
-                                <input type="number" min={0} className="border rounded px-2 py-1 text-sm w-20" value={editingMap[s.id]?.hours ?? s.hours ?? 0} onChange={(e) => setEdit(s.id, 'hours', Number(e.target.value))} />
-                                <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id]?.kind || s.kind || 'Work'} onChange={(e) => setEdit(s.id, 'kind', e.target.value)}>
-                                  <option>Work</option>
-                                  <option>DayOff</option>
-                                  <option>Annual</option>
-                                </select>
-                              </div>
-                            ) : (
-                              <div className="text-sm text-gray-700 flex-1">
-                                <span className="font-medium">{to12h(s.start_time)} - {to12h(s.end_time)}</span>
-                                <span className="text-xs text-gray-600 ml-2">{getLocationName(s.location_id)} • {s.kind}</span>
-                              </div>
-                            )}
+                  ) : (
+                    <button onClick={() => startEditWeek(weekKey)} className="text-sm text-blue-700">✎ Edit</button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {days.map((dayName) => {
+                    const dayEntries = merged.filter((e) => formatDay(e.date) === dayName);
+                    const totalMin = dayEntries.length ? totalMinutesForDay(dayEntries, dayEntries[0].date) : 0;
+                    return (
+                      <div key={dayName} className={`border rounded px-3 py-2 ${dayEntries.some((e) => e.pending || e.is_draft === 1) ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'} ${editingWeekKey === weekKey ? '' : 'opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="text-sm font-medium">
+                            {dayName} <span className="font-normal text-gray-600">{dayEntries[0] ? new Date(dayEntries[0].date).getDate()+'/'+(new Date(dayEntries[0].date).getMonth()+1) : ''}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-600">{Math.floor(totalMin/60)}h {totalMin%60}m</span>
                             {editingWeekKey === weekKey && (
-                              <button className="text-red-600 ml-2" onClick={() => removeEntry(s)}>x</button>
+                              <button className="text-red-600 text-sm" onClick={() => removeDay(dayName, dayEntries)}>x</button>
                             )}
                           </div>
-                        ))}
+                        </div>
+                        <div className="space-y-1">
+                          {dayEntries.map((s, idx) => (
+                            <div key={`${dayName}-${idx}`} className="flex items-center justify-between">
+                              {editingWeekKey === weekKey && !s.pending ? (
+                                <div className="flex items-center gap-2 flex-1">
+                                  <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.start_time || s.start_time || ''} onChange={(e) => setEdit(s.id || s.tempId, 'start_time', e.target.value)} />
+                                  <span className="text-xs text-gray-500">to</span>
+                                  <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.end_time || s.end_time || ''} onChange={(e) => setEdit(s.id || s.tempId, 'end_time', e.target.value)} />
+                                  <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.location_id || s.location_id || ''} onChange={(e) => setEdit(s.id || s.tempId, 'location_id', Number(e.target.value))}>
+                                    <option value="">—</option>
+                                    {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                  </select>
+                                  <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.kind || s.kind || 'Work'} onChange={(e) => setEdit(s.id || s.tempId, 'kind', e.target.value)}>
+                                    <option>Work</option>
+                                    <option>DayOff</option>
+                                    <option>Annual</option>
+                                  </select>
+                                </div>
+                              ) : (
+                                <div className="text-sm text-gray-700 flex-1">
+                                  <span className="font-medium">{to12h(s.start_time)} - {to12h(s.end_time)}</span>
+                                  <span className="text-xs text-gray-600 ml-2">{getLocationName(s.location_id)} • {s.kind}</span>
+                                </div>
+                              )}
+                              {editingWeekKey === weekKey && (
+                                <button className="text-red-600 ml-2" onClick={() => removeEntry(s)}>x</button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div className="mt-4 flex items-center gap-3">
           <button onClick={openSaveModal} className="bg-blue-600 text-white px-4 py-2 rounded">Save Schedule</button>
-          <button onClick={resetSchedule} className="bg-gray-600 text-white px-4 py-2 rounded">Reset Schedule</button>
+          <button onClick={() => { setPendingEntries([]); }} className="bg-gray-600 text-white px-4 py-2 rounded">Reset Schedule</button>
         </div>
       </Card>
-      <Modal />
+
+      {showModal && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="bg-white rounded shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto">
+              <div className="px-4 py-3 border-b flex items-center justify-between">
+                <div className="font-semibold">Save Schedule — Week of {modalWeekKey && new Date(modalWeekKey).toLocaleDateString()}</div>
+                <button onClick={closeModal} className="text-sm">Close</button>
+              </div>
+              <div className="p-4 space-y-4" ref={modalContentRef}>
+                <Card title="Week Summary">
+                  {/* summary computed from entries of modal week */}
+                  <div className="text-sm">Total hours: <span className="font-semibold">{(() => { const entries = getWeekEntries(modalWeekKey)||[]; const total = entries.reduce((sum,e)=> sum+minutesBetween(e.start_time,e.end_time),0); return `${Math.floor(total/60)}h ${total%60}m`; })()}</span></div>
+                  <div className="mt-2 text-sm">
+                    <div className="font-medium mb-1">By location</div>
+                    <ul className="list-disc pl-5">
+                      {(() => { const entries = getWeekEntries(modalWeekKey)||[]; const by = {}; entries.forEach(e=>{ const n=getLocationName(e.location_id); by[n]=(by[n]||0)+minutesBetween(e.start_time,e.end_time);}); const keys=Object.keys(by); return keys.length? keys.map(k=> <li key={k}>{k}: {Math.floor(by[k]/60)}h {by[k]%60}m</li>) : <li className="list-none text-gray-500">No locations</li>; })()}
+                    </ul>
+                  </div>
+                </Card>
+                <Card title="Schedule Table">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left border-b">
+                          <th className="py-2">Day</th>
+                          <th>Time</th>
+                          <th>Location</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {days.map((d) => (
+                          <tr key={d} className="border-b last:border-0 align-top">
+                            <td className="py-2 w-32">{d}</td>
+                            <td className="w-64">
+                              <div className="space-y-1">
+                                {(() => { const dayEntries=(getWeekEntries(modalWeekKey)||[]).filter(e=> formatDay(e.date)===d).sort((a,b)=>(a.start_time||'').localeCompare(b.start_time||'')); return dayEntries.length? dayEntries.map((e,idx)=> <div key={idx}>{to12h(e.start_time)} - {to12h(e.end_time)}</div>): <span className="text-xs text-gray-500">—</span>; })()}
+                              </div>
+                            </td>
+                            <td>
+                              <div className="space-y-1">
+                                {(() => { const dayEntries=(getWeekEntries(modalWeekKey)||[]).filter(e=> formatDay(e.date)===d).sort((a,b)=>(a.start_time||'').localeCompare(b.start_time||'')); return dayEntries.map((e,idx)=> <div key={idx} className="px-2 py-1 bg-gray-100 rounded inline-block">{getLocationName(e.location_id)||'—'}</div>); })()}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              </div>
+              <div className="px-4 pb-4 flex items-center gap-3">
+                <button onClick={publishModalWeek} className="bg-blue-600 text-white px-4 py-2 rounded">Confirm / Submit</button>
+                <button onClick={closeModal} className="bg-gray-600 text-white px-4 py-2 rounded">Cancel</button>
+                <button onClick={downloadPDF} className="bg-gray-800 text-white px-4 py-2 rounded ml-auto">Download as PDF</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
