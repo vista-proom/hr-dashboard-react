@@ -113,6 +113,15 @@ function createSchema(database) {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY(location_id) REFERENCES locations(id)
     );
+
+    CREATE TABLE IF NOT EXISTS schedule_drafts (
+      user_id INTEGER NOT NULL,
+      week_start TEXT NOT NULL,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, week_start),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
 
   // Safe migrations
@@ -124,6 +133,7 @@ function createSchema(database) {
   if (!columnExists(database, 'tasks', 'last_status_modified_at')) database.exec(`ALTER TABLE tasks ADD COLUMN last_status_modified_at TEXT`);
   if (!columnExists(database, 'tasks', 'modified_by')) database.exec(`ALTER TABLE tasks ADD COLUMN modified_by INTEGER`);
   if (!columnExists(database, 'schedules', 'is_draft')) database.exec(`ALTER TABLE schedules ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 1`);
+  // schedule_drafts table created above if not exists
 }
 
 function seed(database) {
@@ -459,6 +469,44 @@ export const db = {
   publishDraftsForUserRange(userId, startDate, endDate) {
     this.database.prepare('UPDATE schedules SET is_draft = 0, updated_at = ? WHERE user_id = ? AND is_draft = 1 AND date >= ? AND date <= ?')
       .run(new Date().toISOString(), userId, startDate, endDate);
+  },
+  saveScheduleDraft(userId, weekStart, entries) {
+    const data = JSON.stringify(entries || []);
+    const now = new Date().toISOString();
+    this.database.prepare('INSERT INTO schedule_drafts (user_id, week_start, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, week_start) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at')
+      .run(userId, weekStart, data, now);
+  },
+  getScheduleDraft(userId, weekStart) {
+    const row = this.database.prepare('SELECT data FROM schedule_drafts WHERE user_id = ? AND week_start = ?').get(userId, weekStart);
+    if (!row) return [];
+    try { return JSON.parse(row.data) || []; } catch { return []; }
+  },
+  deleteScheduleDraft(userId, weekStart) {
+    this.database.prepare('DELETE FROM schedule_drafts WHERE user_id = ? AND week_start = ?').run(userId, weekStart);
+  },
+  finalizeScheduleDraft(userId, weekStart) {
+    // compute endDate = weekStart + 6
+    const start = new Date(weekStart);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const endDate = end.toISOString().slice(0,10);
+    const entries = this.getScheduleDraft(userId, weekStart);
+    // remove existing live schedules for range
+    this.database.prepare('DELETE FROM schedules WHERE user_id = ? AND date >= ? AND date <= ?').run(userId, weekStart, endDate);
+    // insert as live
+    for (const e of entries) {
+      this.createSchedule({
+        userId,
+        date: e.date,
+        start_time: e.start_time,
+        end_time: e.end_time,
+        hours: e.hours,
+        location_id: e.location_id,
+        kind: e.kind || 'Work',
+        is_draft: 0,
+      });
+    }
+    this.deleteScheduleDraft(userId, weekStart);
   },
   deleteScheduleById(id) {
     this.database.prepare('DELETE FROM schedules WHERE id = ?').run(id);

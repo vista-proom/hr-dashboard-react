@@ -5,11 +5,13 @@ import { requireRole } from '../middleware/auth.js';
 const router = Router();
 
 router.get('/me', (req, res) => {
-  res.json(db.listSchedulesForUser(req.user.id));
+  // employees get only live schedules
+  res.json(db.listSchedulesForUser(req.user.id, { includeDraft: false }));
 });
 
 router.get('/user/:id', requireRole('Viewer', 'Manager'), (req, res) => {
   const userId = Number(req.params.id);
+  // managers/viewers get both; UI decides what to show
   res.json(db.listSchedulesForUser(userId));
 });
 
@@ -31,6 +33,23 @@ router.put('/:id', requireRole('Manager'), (req, res) => {
   });
   if (!updated) return res.status(404).json({ error: 'Not found' });
   res.json(updated);
+});
+
+router.post('/draft', requireRole('Manager'), (req, res) => {
+  const { userId, weekStart, entries } = req.body || {};
+  db.saveScheduleDraft(userId, weekStart, entries);
+  res.json({ ok: true });
+});
+
+router.get('/draft/:userId/:weekStart', requireRole('Manager'), (req, res) => {
+  const entries = db.getScheduleDraft(Number(req.params.userId), req.params.weekStart);
+  res.json(entries);
+});
+
+router.post('/finalize', requireRole('Manager'), (req, res) => {
+  const { userId, weekStart } = req.body || {};
+  db.finalizeScheduleDraft(userId, weekStart);
+  res.json({ ok: true });
 });
 
 router.post('/publish/:userId', requireRole('Manager'), (req, res) => {

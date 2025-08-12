@@ -45,6 +45,7 @@ export default function AssignShifts() {
   const [editingMap, setEditingMap] = useState({}); // id -> edited fields
   const [showModal, setShowModal] = useState(false);
   const [modalWeekKey, setModalWeekKey] = useState(null);
+  const [draftByWeek, setDraftByWeek] = useState({}); // weekKey -> entries array
 
   useEffect(() => {
     const run = async () => {
@@ -63,6 +64,26 @@ export default function AssignShifts() {
     setServerSchedules(data);
   };
   useEffect(() => { loadPreview(form.userId); }, [form.userId]);
+
+  // Load draft for current user and current week on employee change
+  useEffect(() => {
+    const load = async () => {
+      if (!form.userId) return;
+      // pick newest week key from serverSchedules or today's week
+      const todayKey = getWeekStart(new Date().toISOString().slice(0,10)).toISOString().slice(0,10);
+      let key = todayKey;
+      if (serverSchedules.length > 0) {
+        const keys = Array.from(new Set(serverSchedules.map((s) => getWeekStart(s.date).toISOString().slice(0,10))));
+        keys.sort((a, b) => (a < b ? 1 : -1));
+        key = keys[0];
+      }
+      try {
+        const { data } = await api.get(`/schedules/draft/${form.userId}/${key}`);
+        setDraftByWeek((m) => ({ ...m, [key]: data }));
+      } catch {}
+    };
+    load();
+  }, [form.userId, serverSchedules]);
 
   const clearCurrent = () => {
     setForm((f) => ({ ...f, date: '', startTime: '', endTime: '', hours: 8, locationId: '', kind: 'Work' }));
@@ -145,6 +166,21 @@ export default function AssignShifts() {
     });
   }, [allForPreview]);
 
+  const currentWeeks = useMemo(() => weeks, [weeks]);
+
+  // Helper to get working set (server + draft overrides)
+  const getWeekEntries = (weekKey) => {
+    const serverEntries = currentWeeks.find(([k]) => k === weekKey)?.[1] || [];
+    const draftEntries = draftByWeek[weekKey] || [];
+    // merge: drafts replace same date/time or add new; for simplicity, append
+    return [...serverEntries, ...draftEntries.map((e) => ({ ...e, pending: true }))];
+  };
+
+  const saveDraftWeek = async (weekKey) => {
+    const entries = draftByWeek[weekKey] || [];
+    await api.post('/schedules/draft', { userId: Number(form.userId), weekStart: weekKey, entries });
+  };
+
   const getLocationName = (id) => locations.find((l) => l.id === id)?.name || '—';
 
   const removeEntry = async (entry) => {
@@ -213,14 +249,13 @@ export default function AssignShifts() {
     setModalWeekKey(null);
   };
 
+  // On Save Schedule popup confirm, finalize from draft
   const publishModalWeek = async () => {
     if (!modalWeekKey) return;
-    const startDate = modalWeekKey;
-    const end = new Date(modalWeekKey);
-    end.setDate(end.getDate() + 6);
-    const endDate = end.toISOString().slice(0,10);
-    await api.post(`/schedules/publish-range/${form.userId}`, { startDate, endDate });
+    await saveDraftWeek(modalWeekKey);
+    await api.post('/schedules/finalize', { userId: Number(form.userId), weekStart: modalWeekKey });
     await loadPreview(form.userId);
+    setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
     closeModal();
   };
 
@@ -428,7 +463,9 @@ export default function AssignShifts() {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-600">{total}h</span>
-                          <button className="text-red-600 text-sm" onClick={() => removeDay(dayName, dayEntries)}>x</button>
+                          {editingWeekKey === weekKey && (
+                            <button className="text-red-600 text-sm" onClick={() => removeDay(dayName, dayEntries)}>x</button>
+                          )}
                         </div>
                       </div>
                       <div className="space-y-1">
@@ -456,7 +493,9 @@ export default function AssignShifts() {
                                 <span className="text-xs text-gray-600 ml-2">{getLocationName(s.location_id)} • {s.kind}</span>
                               </div>
                             )}
-                            <button className="text-red-600 ml-2" onClick={() => removeEntry(s)}>x</button>
+                            {editingWeekKey === weekKey && (
+                              <button className="text-red-600 ml-2" onClick={() => removeEntry(s)}>x</button>
+                            )}
                           </div>
                         ))}
                       </div>
