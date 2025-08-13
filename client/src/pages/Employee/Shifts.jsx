@@ -256,7 +256,7 @@ export default function Shifts() {
   const refresh = async () => {
     const [s, live] = await Promise.all([
       api.get('/shifts/me'),
-      api.get('/schedules/me'),
+      api.get('/schedules/me'), // This already filters out drafts (includeDraft: false)
     ]);
     setShifts(s.data);
     setSchedule(live.data);
@@ -387,7 +387,7 @@ export default function Shifts() {
     );
   };
 
-  // Get current week's schedule
+  // Get current week's schedule (only confirmed schedules)
   const currentWeekSchedule = useMemo(() => {
     const now = new Date();
     const weekStart = getWeekStart(now.toISOString().slice(0, 10));
@@ -429,7 +429,7 @@ export default function Shifts() {
     return locationMap;
   }, [currentWeekSchedule]);
 
-  // Group schedule by weeks for selected weeks
+  // Group schedule by weeks for selected weeks (only confirmed schedules)
   const selectedWeeksSchedule = useMemo(() => {
     if (selectedWeeks.length === 0) return [];
     

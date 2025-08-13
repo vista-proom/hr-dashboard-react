@@ -48,8 +48,9 @@ export default function AssignShifts() {
   const [showModal, setShowModal] = useState(false);
   const [modalWeekKey, setModalWeekKey] = useState(null);
   const [draftByWeek, setDraftByWeek] = useState({});
-  const [viewOld, setViewOld] = useState(false);
   const [toast, setToast] = useState({ show: false, text: '' });
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [newLocation, setNewLocation] = useState({ name: '', googleMapsUrl: '', latitude: '', longitude: '' });
   const modalContentRef = useRef(null);
 
   useEffect(() => {
@@ -78,24 +79,18 @@ export default function AssignShifts() {
     setForm((f) => ({ ...f, hours: Math.round(computedMinutes/60) }));
   }, [computedMinutes]);
 
-  // load draft for current user & newest week
+  // load draft for current user & current week only
   useEffect(() => {
     const load = async () => {
       if (!form.userId) return;
       const todayKey = getWeekStart(new Date().toISOString().slice(0,10)).toISOString().slice(0,10);
-      let key = todayKey;
-      if (serverSchedules.length > 0) {
-        const keys = Array.from(new Set(serverSchedules.map((s) => getWeekStart(s.date).toISOString().slice(0,10))));
-        keys.sort((a, b) => (a < b ? 1 : -1));
-        key = keys[0];
-      }
       try {
-        const { data } = await api.get(`/schedules/draft/${form.userId}/${key}`);
-        setDraftByWeek((m) => ({ ...m, [key]: data }));
+        const { data } = await api.get(`/schedules/draft/${form.userId}/${todayKey}`);
+        setDraftByWeek((m) => ({ ...m, [todayKey]: data }));
       } catch {}
     };
     load();
-  }, [form.userId, serverSchedules]);
+  }, [form.userId]);
 
   const clearCurrent = () => {
     setForm((f) => ({ ...f, date: '', startTime: '', endTime: '', locationId: '', kind: 'Work' }));
@@ -122,9 +117,8 @@ export default function AssignShifts() {
   };
 
   const openSaveModal = () => {
-    if (weeks.length === 0) return;
-    const key = weeks[0][0];
-    setModalWeekKey(key);
+    const todayKey = getWeekStart(new Date().toISOString().slice(0,10)).toISOString().slice(0,10);
+    setModalWeekKey(todayKey);
     setShowModal(true);
   };
 
@@ -137,7 +131,7 @@ export default function AssignShifts() {
     await loadPreview(form.userId);
     setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
     closeModal();
-    showToast('Schedule Updated');
+    showToast('Schedule Confirmed and Published to Employee');
   };
 
   // live pending reflection
@@ -157,39 +151,53 @@ export default function AssignShifts() {
     setPendingEntries([entry]);
   }, [form.userId, form.date, form.startTime, form.endTime, form.locationId, form.kind, computedMinutes]);
 
-  // current month filter
-  const currentMonth = new Date().getMonth();
-  const inCurrentMonth = (dateStr) => new Date(dateStr + 'T00:00:00').getMonth() === currentMonth;
+  // Get current week only
+  const currentWeekKey = useMemo(() => {
+    return getWeekStart(new Date().toISOString().slice(0,10)).toISOString().slice(0,10);
+  }, []);
 
-  // Week data
+  // Week data - only current week
   const allForPreview = useMemo(() => {
     const base = serverSchedules.filter((s) => String(s.user_id) === String(form.userId));
     const pending = pendingEntries.filter((s) => String(s.user_id) === String(form.userId));
     return [...base, ...pending];
   }, [serverSchedules, pendingEntries, form.userId]);
 
-  const weeks = useMemo(() => {
-    const map = new Map();
-    // include only drafts or all depending on toggle
-    const filtered = allForPreview.filter((e) => viewOld || e.pending || e.is_draft === 1);
-    for (const s of filtered) {
-      const wkStart = getWeekStart(s.date);
-      const key = wkStart.toISOString().slice(0,10);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(s);
-    }
-    const list = Array.from(map.entries()).filter(([k, entries]) => entries.some((e) => inCurrentMonth(e.date)));
-    list.sort((a, b) => (a[0] < b[0] ? 1 : -1));
-    return list.map(([key, entries]) => {
-      const sorted = entries.slice().sort((a, b) => {
-        const da = (new Date(a.date + 'T00:00:00').getDay() + 1) % 7;
-        const db = (new Date(b.date + 'T00:00:00').getDay() + 1) % 7;
-        if (da !== db) return da - db;
-        return (a.start_time || '').localeCompare(b.start_time || '');
-      });
-      return [key, sorted];
+  const currentWeekEntries = useMemo(() => {
+    const filtered = allForPreview.filter((e) => {
+      const entryWeekKey = getWeekStart(e.date).toISOString().slice(0,10);
+      return entryWeekKey === currentWeekKey;
     });
-  }, [allForPreview, viewOld]);
+    
+    return filtered.sort((a, b) => {
+      const da = (new Date(a.date + 'T00:00:00').getDay() + 1) % 7;
+      const db = (new Date(b.date + 'T00:00:00').getDay() + 1) % 7;
+      if (da !== db) return da - db;
+      return (a.start_time || '').localeCompare(b.start_time || '');
+    });
+  }, [allForPreview, currentWeekKey]);
+
+  // Live hours calculation
+  const liveTotalHours = useMemo(() => {
+    return currentWeekEntries.reduce((total, entry) => {
+      if (entry.start_time && entry.end_time) {
+        return total + minutesBetween(entry.start_time, entry.end_time);
+      }
+      return total;
+    }, 0);
+  }, [currentWeekEntries]);
+
+  const liveLocationHours = useMemo(() => {
+    const locationMap = new Map();
+    currentWeekEntries.forEach(entry => {
+      if (entry.start_time && entry.end_time && entry.location_id) {
+        const minutes = minutesBetween(entry.start_time, entry.end_time);
+        const current = locationMap.get(entry.location_id) || 0;
+        locationMap.set(entry.location_id, current + minutes);
+      }
+    });
+    return locationMap;
+  }, [currentWeekEntries]);
 
   const getLocationName = (id) => locations.find((l) => l.id === id)?.name || '—';
 
@@ -254,7 +262,7 @@ export default function AssignShifts() {
   const setEdit = (id, field, value) => { setEditingMap((m) => ({ ...m, [id]: { ...m[id], [field]: value } })); };
 
   const getWeekEntries = (weekKey) => {
-    const serverEntries = weeks.find(([k]) => k === weekKey)?.[1] || [];
+    const serverEntries = currentWeekEntries.filter(e => getWeekStart(e.date).toISOString().slice(0,10) === weekKey);
     const draftEntries = draftByWeek[weekKey] || [];
     return [...serverEntries, ...draftEntries.map((e, idx) => ({ ...e, is_draft: 1, tempId: idx }))];
   };
@@ -271,6 +279,43 @@ export default function AssignShifts() {
     w.close();
   };
 
+  // Location management
+  const addLocation = async () => {
+    if (!newLocation.name) return;
+    
+    try {
+      const { data } = await api.post('/locations', {
+        name: newLocation.name,
+        googleMapsUrl: newLocation.googleMapsUrl,
+        latitude: newLocation.latitude ? parseFloat(newLocation.latitude) : null,
+        longitude: newLocation.longitude ? parseFloat(newLocation.longitude) : null
+      });
+      
+      setLocations(prev => [...prev, data]);
+      setNewLocation({ name: '', googleMapsUrl: '', latitude: '', longitude: '' });
+      setShowLocationModal(false);
+      showToast('Location Added Successfully');
+    } catch (error) {
+      showToast('Failed to add location');
+    }
+  };
+
+  const getCurrentLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setNewLocation(prev => ({
+            ...prev,
+            latitude: position.coords.latitude.toFixed(6),
+            longitude: position.coords.longitude.toFixed(6)
+          }));
+        },
+        () => showToast('Unable to get current location'),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    }
+  };
+
   return (
     <div className="space-y-4">
       {toast.show && (
@@ -282,7 +327,12 @@ export default function AssignShifts() {
       )}
 
       <Card title="Assign Shift" actions={
-        <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" className="accent-blue-600" checked={viewOld} onChange={(e) => setViewOld(e.target.checked)} /> View Old Schedules</label>
+        <button 
+          onClick={() => setShowLocationModal(true)}
+          className="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 transition-colors"
+        >
+          Add Location
+        </button>
       }>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
@@ -326,89 +376,193 @@ export default function AssignShifts() {
         </div>
         <div className="mt-4 flex gap-2">
           <button onClick={saveShift} className="bg-blue-600 text-white px-4 py-2 rounded">Save Shift</button>
-          <button onClick={clearCurrent} className="bg-gray-600 text-white px-4 py-2 rounded">Clear</button>
+          <button onClick={clearCurrent} className="bg-gray-600 text-white px-3 py-2 rounded">Clear</button>
         </div>
       </Card>
 
-      <Card title="Schedule Preview">
+      <Card title="Schedule Preview - Current Week Only">
         <div className="text-sm text-gray-600 mb-2">Employee: {employees.find((e) => String(e.id) === String(form.userId))?.name || '—'}</div>
+        
+        {/* Live Hours Counter */}
+        <div className="bg-blue-50 p-4 rounded-lg mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <h4 className="font-medium text-blue-800 mb-2">Live Weekly Summary</h4>
+              <p className="text-sm text-blue-700">
+                Total Working Hours: <span className="font-semibold">{Math.floor(liveTotalHours/60)}h {liveTotalHours%60}m</span>
+              </p>
+            </div>
+            <div>
+              <h4 className="font-medium text-blue-800 mb-2">Hours by Location</h4>
+              {Array.from(liveLocationHours.entries()).map(([locationId, minutes]) => (
+                <p key={locationId} className="text-sm text-blue-700">
+                  {getLocationName(locationId)}: <span className="font-semibold">{Math.floor(minutes/60)}h {minutes%60}m</span>
+                </p>
+              ))}
+              {liveLocationHours.size === 0 && (
+                <p className="text-sm text-blue-700 italic">No locations assigned yet</p>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="space-y-4">
-          {weeks.length === 0 && <div className="text-sm text-gray-500">No scheduled items this month.</div>}
-          {weeks.map(([weekKey, entries]) => {
-            const merged = getWeekEntries(weekKey);
-            return (
-              <div key={weekKey} className="border rounded p-3 bg-white">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="font-semibold">Week of {new Date(weekKey).toLocaleDateString()}</div>
-                  {editingWeekKey === weekKey ? (
-                    <div className="space-x-2">
-                      <button onClick={submitEditWeek} className="bg-blue-600 text-white px-3 py-1 rounded text-sm">Submit</button>
-                      <button onClick={cancelEditWeek} className="bg-gray-600 text-white px-3 py-1 rounded text-sm">Cancel</button>
-                    </div>
-                  ) : (
-                    <button onClick={() => startEditWeek(weekKey)} className="text-sm text-blue-700">✎ Edit</button>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {days.map((dayName) => {
-                    const dayEntries = merged.filter((e) => formatDay(e.date) === dayName);
-                    const totalMin = dayEntries.length ? totalMinutesForDay(dayEntries, dayEntries[0].date) : 0;
-                    return (
-                      <div key={dayName} className={`border rounded px-3 py-2 ${dayEntries.some((e) => e.pending || e.is_draft === 1) ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'} ${editingWeekKey === weekKey ? '' : 'opacity-70'}`}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="text-sm font-medium">
-                            {dayName} <span className="font-normal text-gray-600">{dayEntries[0] ? new Date(dayEntries[0].date).getDate()+'/'+(new Date(dayEntries[0].date).getMonth()+1) : ''}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-600">{Math.floor(totalMin/60)}h {totalMin%60}m</span>
-                            {editingWeekKey === weekKey && (
-                              <button className="text-red-600 text-sm" onClick={() => removeDay(dayName, dayEntries)}>x</button>
-                            )}
-                          </div>
+          {currentWeekEntries.length === 0 ? (
+            <div className="text-sm text-gray-500 text-center py-8">No scheduled items for this week.</div>
+          ) : (
+            <div className="border rounded p-3 bg-white">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-semibold">Week of {new Date(currentWeekKey).toLocaleDateString()}</div>
+                {editingWeekKey === currentWeekKey ? (
+                  <div className="space-x-2">
+                    <button onClick={submitEditWeek} className="bg-blue-600 text-white px-3 py-1 rounded text-sm">Submit</button>
+                    <button onClick={cancelEditWeek} className="bg-gray-600 text-white px-3 py-1 rounded text-sm">Cancel</button>
+                  </div>
+                ) : (
+                  <button onClick={() => startEditWeek(currentWeekKey)} className="text-sm text-blue-700">✎ Edit</button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {days.map((dayName) => {
+                  const dayEntries = currentWeekEntries.filter((e) => formatDay(e.date) === dayName);
+                  const totalMin = dayEntries.length ? totalMinutesForDay(dayEntries, dayEntries[0].date) : 0;
+                  return (
+                    <div key={dayName} className={`border rounded px-3 py-2 ${dayEntries.some((e) => e.pending || e.is_draft === 1) ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'} ${editingWeekKey === currentWeekKey ? '' : 'opacity-70'}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-sm font-medium">
+                          {dayName} <span className="font-normal text-gray-600">{dayEntries[0] ? new Date(dayEntries[0].date).getDate()+'/'+(new Date(dayEntries[0].date).getMonth()+1) : ''}</span>
                         </div>
-                        <div className="space-y-1">
-                          {dayEntries.map((s, idx) => (
-                            <div key={`${dayName}-${idx}`} className="flex items-center justify-between">
-                              {editingWeekKey === weekKey && !s.pending ? (
-                                <div className="flex items-center gap-2 flex-1">
-                                  <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.start_time || s.start_time || ''} onChange={(e) => setEdit(s.id || s.tempId, 'start_time', e.target.value)} />
-                                  <span className="text-xs text-gray-500">to</span>
-                                  <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.end_time || s.end_time || ''} onChange={(e) => setEdit(s.id || s.tempId, 'end_time', e.target.value)} />
-                                  <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.location_id || s.location_id || ''} onChange={(e) => setEdit(s.id || s.tempId, 'location_id', Number(e.target.value))}>
-                                    <option value="">—</option>
-                                    {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                                  </select>
-                                  <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.kind || s.kind || 'Work'} onChange={(e) => setEdit(s.id || s.tempId, 'kind', e.target.value)}>
-                                    <option>Work</option>
-                                    <option>DayOff</option>
-                                    <option>Annual</option>
-                                  </select>
-                                </div>
-                              ) : (
-                                <div className="text-sm text-gray-700 flex-1">
-                                  <span className="font-medium">{to12h(s.start_time)} - {to12h(s.end_time)}</span>
-                                  <span className="text-xs text-gray-600 ml-2">{getLocationName(s.location_id)} • {s.kind}</span>
-                                </div>
-                              )}
-                              {editingWeekKey === weekKey && (
-                                <button className="text-red-600 ml-2" onClick={() => removeEntry(s)}>x</button>
-                              )}
-                            </div>
-                          ))}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-600">{Math.floor(totalMin/60)}h {totalMin%60}m</span>
+                          {editingWeekKey === currentWeekKey && (
+                            <button className="text-red-600 text-sm" onClick={() => removeDay(dayName, dayEntries)}>x</button>
+                          )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                      <div className="space-y-1">
+                        {dayEntries.map((s, idx) => (
+                          <div key={`${dayName}-${idx}`} className="flex items-center justify-between">
+                            {editingWeekKey === currentWeekKey && !s.pending ? (
+                              <div className="flex items-center gap-2 flex-1">
+                                <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.start_time || s.start_time || ''} onChange={(e) => setEdit(s.id || s.tempId, 'start_time', e.target.value)} />
+                                <span className="text-xs text-gray-500">to</span>
+                                <input type="time" className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.end_time || s.end_time || ''} onChange={(e) => setEdit(s.id || s.tempId, 'end_time', e.target.value)} />
+                                <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.location_id || s.location_id || ''} onChange={(e) => setEdit(s.id || s.tempId, 'location_id', Number(e.target.value))}>
+                                  <option value="">—</option>
+                                  {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                                </select>
+                                <select className="border rounded px-2 py-1 text-sm" value={editingMap[s.id || s.tempId]?.kind || s.kind || 'Work'} onChange={(e) => setEdit(s.id || s.tempId, 'kind', e.target.value)}>
+                                  <option>Work</option>
+                                  <option>DayOff</option>
+                                  <option>Annual</option>
+                                </select>
+                              </div>
+                            ) : (
+                              <div className="text-sm text-gray-700 flex-1">
+                                <span className="font-medium">{to12h(s.start_time)} - {to12h(s.end_time)}</span>
+                                <span className="text-xs text-gray-600 ml-2">{getLocationName(s.location_id)} • {s.kind}</span>
+                                {/* Draft Indicator */}
+                                {(s.pending || s.is_draft === 1) && (
+                                  <span className="ml-2 text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full">
+                                    Draft
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {editingWeekKey === currentWeekKey && (
+                              <button className="text-red-600 ml-2" onClick={() => removeEntry(s)}>x</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          )}
         </div>
         <div className="mt-4 flex items-center gap-3">
           <button onClick={openSaveModal} className="bg-blue-600 text-white px-4 py-2 rounded">Save Schedule</button>
-          <button onClick={() => { setPendingEntries([]); }} className="bg-gray-600 text-white px-4 py-2 rounded">Reset Schedule</button>
+          <button onClick={() => { setPendingEntries([]); }} className="bg-gray-600 text-white px-3 py-2 rounded">Reset Schedule</button>
         </div>
       </Card>
+
+      {/* Location Modal */}
+      {showLocationModal && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowLocationModal(false)} />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="bg-white rounded shadow-xl w-full max-w-md">
+              <div className="px-4 py-3 border-b flex items-center justify-between">
+                <div className="font-semibold">Add New Location</div>
+                <button onClick={() => setShowLocationModal(false)} className="text-sm">Close</button>
+              </div>
+              <div className="p-4 space-y-4">
+                <div>
+                  <label className="block text-sm mb-1">Location Name *</label>
+                  <input 
+                    type="text" 
+                    className="w-full border rounded px-3 py-2" 
+                    value={newLocation.name} 
+                    onChange={(e) => setNewLocation({...newLocation, name: e.target.value})}
+                    placeholder="e.g., Main Office, Warehouse A"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm mb-1">Google Maps URL (optional)</label>
+                  <input 
+                    type="url" 
+                    className="w-full border rounded px-3 py-2" 
+                    value={newLocation.googleMapsUrl} 
+                    onChange={(e) => setNewLocation({...newLocation, googleMapsUrl: e.target.value})}
+                    placeholder="https://maps.google.com/..."
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm mb-1">Latitude</label>
+                    <input 
+                      type="number" 
+                      step="any"
+                      className="w-full border rounded px-3 py-2" 
+                      value={newLocation.latitude} 
+                      onChange={(e) => setNewLocation({...newLocation, latitude: e.target.value})}
+                      placeholder="40.7128"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm mb-1">Longitude</label>
+                    <input 
+                      type="number" 
+                      step="any"
+                      className="w-full border rounded px-3 py-2" 
+                      value={newLocation.longitude} 
+                      onChange={(e) => setNewLocation({...newLocation, longitude: e.target.value})}
+                      placeholder="-74.0060"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={getCurrentLocation}
+                    className="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 transition-colors"
+                  >
+                    Get Current Location
+                  </button>
+                  <button 
+                    onClick={addLocation}
+                    disabled={!newLocation.name}
+                    className="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed ml-auto"
+                  >
+                    Add Location
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showModal && (
         <div className="fixed inset-0 z-50">
@@ -416,7 +570,7 @@ export default function AssignShifts() {
           <div className="absolute inset-0 flex items-center justify-center p-4">
             <div className="bg-white rounded shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto">
               <div className="px-4 py-3 border-b flex items-center justify-between">
-                <div className="font-semibold">Save Schedule — Week of {modalWeekKey && new Date(modalWeekKey).toLocaleDateString()}</div>
+                <div className="font-semibold">Confirm Schedule — Week of {modalWeekKey && new Date(modalWeekKey).toLocaleDateString()}</div>
                 <button onClick={closeModal} className="text-sm">Close</button>
               </div>
               <div className="p-4 space-y-4" ref={modalContentRef}>
@@ -462,9 +616,9 @@ export default function AssignShifts() {
                 </Card>
               </div>
               <div className="px-4 pb-4 flex items-center gap-3">
-                <button onClick={publishModalWeek} className="bg-blue-600 text-white px-4 py-2 rounded">Confirm / Submit</button>
-                <button onClick={closeModal} className="bg-gray-600 text-white px-4 py-2 rounded">Cancel</button>
-                <button onClick={downloadPDF} className="bg-gray-800 text-white px-4 py-2 rounded ml-auto">Download as PDF</button>
+                <button onClick={publishModalWeek} className="bg-green-600 text-white px-4 py-2 rounded">Confirm / Submit</button>
+                <button onClick={closeModal} className="bg-gray-600 text-white px-3 py-2 rounded">Cancel</button>
+                <button onClick={downloadPDF} className="bg-gray-800 text-white px-3 py-2 rounded ml-auto">Download as PDF</button>
               </div>
             </div>
           </div>
