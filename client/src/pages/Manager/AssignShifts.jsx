@@ -51,6 +51,7 @@ export default function AssignShifts() {
   const [toast, setToast] = useState({ show: false, text: '' });
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [newLocation, setNewLocation] = useState({ name: '', googleMapsUrl: '', latitude: '', longitude: '' });
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState({ show: false, locationId: null, locationName: '' });
   const modalContentRef = useRef(null);
 
   useEffect(() => {
@@ -128,6 +129,17 @@ export default function AssignShifts() {
     if (!modalWeekKey) return;
     await saveDraftWeek(modalWeekKey);
     await api.post('/schedules/finalize', { userId: Number(form.userId), weekStart: modalWeekKey });
+    await loadPreview(form.userId);
+    setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
+    closeModal();
+    showToast('Schedule Saved as Draft');
+  };
+
+  const confirmModalWeek = async () => {
+    if (!modalWeekKey) return;
+    await saveDraftWeek(modalWeekKey);
+    await api.post('/schedules/finalize', { userId: Number(form.userId), weekStart: modalWeekKey });
+    await api.post('/schedules/confirm', { userId: Number(form.userId), weekStart: modalWeekKey });
     await loadPreview(form.userId);
     setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
     closeModal();
@@ -316,6 +328,21 @@ export default function AssignShifts() {
     }
   };
 
+  const deleteLocation = async (locationId) => {
+    try {
+      await api.delete(`/locations/${locationId}`);
+      setLocations(prev => prev.filter(loc => loc.id !== locationId));
+      setShowDeleteConfirm({ show: false, locationId: null, locationName: '' });
+      showToast('Location Deleted Successfully');
+    } catch (error) {
+      showToast('Failed to delete location');
+    }
+  };
+
+  const confirmDeleteLocation = (locationId, locationName) => {
+    setShowDeleteConfirm({ show: true, locationId, locationName });
+  };
+
   return (
     <div className="space-y-4">
       {toast.show && (
@@ -434,7 +461,7 @@ export default function AssignShifts() {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-600">{Math.floor(totalMin/60)}h {totalMin%60}m</span>
-                          {editingWeekKey === currentWeekKey && (
+                          {editingWeekKey === currentWeekKey && dayEntries.length > 0 && (
                             <button className="text-red-600 text-sm" onClick={() => removeDay(dayName, dayEntries)}>x</button>
                           )}
                         </div>
@@ -474,6 +501,9 @@ export default function AssignShifts() {
                             )}
                           </div>
                         ))}
+                        {dayEntries.length === 0 && (
+                          <div className="text-sm text-gray-400 italic">No shifts</div>
+                        )}
                       </div>
                     </div>
                   );
@@ -485,6 +515,40 @@ export default function AssignShifts() {
         <div className="mt-4 flex items-center gap-3">
           <button onClick={openSaveModal} className="bg-blue-600 text-white px-4 py-2 rounded">Save Schedule</button>
           <button onClick={() => { setPendingEntries([]); }} className="bg-gray-600 text-white px-3 py-2 rounded">Reset Schedule</button>
+        </div>
+      </Card>
+
+      {/* Location Management */}
+      <Card title="Location Management">
+        <div className="space-y-3">
+          {locations.map((location) => (
+            <div key={location.id} className="flex items-center justify-between p-3 border rounded-lg bg-gray-50">
+              <div className="flex-1">
+                <div className="font-medium text-gray-800">{location.name}</div>
+                {location.latitude && location.longitude && (
+                  <div className="text-sm text-gray-600">
+                    Coordinates: {location.latitude}, {location.longitude}
+                  </div>
+                )}
+                {location.google_maps_url && (
+                  <a 
+                    href={location.google_maps_url} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    View on Google Maps
+                  </a>
+                )}
+              </div>
+              <button
+                onClick={() => confirmDeleteLocation(location.id, location.name)}
+                className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 transition-colors text-sm"
+              >
+                Delete
+              </button>
+            </div>
+          ))}
         </div>
       </Card>
 
@@ -564,13 +628,47 @@ export default function AssignShifts() {
         </div>
       )}
 
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm.show && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowDeleteConfirm({ show: false, locationId: null, locationName: '' })} />
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="bg-white rounded shadow-xl w-full max-w-md">
+              <div className="px-4 py-3 border-b">
+                <div className="font-semibold text-red-600">Confirm Location Deletion</div>
+              </div>
+              <div className="p-4">
+                <p className="text-gray-700 mb-4">
+                  Are you sure you want to delete the location <strong>"{showDeleteConfirm.locationName}"</strong>? 
+                  This action cannot be undone.
+                </p>
+                <div className="flex justify-end space-x-3">
+                  <button
+                    onClick={() => setShowDeleteConfirm({ show: false, locationId: null, locationName: '' })}
+                    className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => deleteLocation(showDeleteConfirm.locationId)}
+                    className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                  >
+                    Delete Location
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showModal && (
         <div className="fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
           <div className="absolute inset-0 flex items-center justify-center p-4">
             <div className="bg-white rounded shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto">
               <div className="px-4 py-3 border-b flex items-center justify-between">
-                <div className="font-semibold">Confirm Schedule — Week of {modalWeekKey && new Date(modalWeekKey).toLocaleDateString()}</div>
+                <div className="font-semibold">Schedule Management — Week of {modalWeekKey && new Date(modalWeekKey).toLocaleDateString()}</div>
                 <button onClick={closeModal} className="text-sm">Close</button>
               </div>
               <div className="p-4 space-y-4" ref={modalContentRef}>
@@ -616,7 +714,8 @@ export default function AssignShifts() {
                 </Card>
               </div>
               <div className="px-4 pb-4 flex items-center gap-3">
-                <button onClick={publishModalWeek} className="bg-green-600 text-white px-4 py-2 rounded">Confirm / Submit</button>
+                <button onClick={publishModalWeek} className="bg-blue-600 text-white px-4 py-2 rounded">Save as Draft</button>
+                <button onClick={confirmModalWeek} className="bg-green-600 text-white px-4 py-2 rounded">Confirm & Publish</button>
                 <button onClick={closeModal} className="bg-gray-600 text-white px-3 py-2 rounded">Cancel</button>
                 <button onClick={downloadPDF} className="bg-gray-800 text-white px-3 py-2 rounded ml-auto">Download as PDF</button>
               </div>

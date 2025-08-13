@@ -186,49 +186,65 @@ function WeekSchedule({ week, entries, isExpanded, onToggle }) {
               <thead>
                 <tr className="text-left border-b-2 border-gray-200">
                   <th className="py-3 px-2 font-semibold text-gray-700">Day</th>
-                  <th className="py-3 px-2 font-semibold text-gray-700">Time</th>
+                  <th className="py-3 px-2 font-semibold text-gray-700">Start Time</th>
+                  <th className="py-3 px-2 font-semibold text-gray-700">End Time</th>
                   <th className="py-3 px-2 font-semibold text-gray-700">Location</th>
                 </tr>
               </thead>
               <tbody>
-                {days.map((d, index) => (
-                  <tr 
-                    key={d} 
-                    className={`border-b border-gray-100 hover:bg-gray-50 ${
-                      index === adjustedCurrentDay ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''
-                    }`}
-                  >
-                    <td className="py-3 px-2 w-32 font-medium text-gray-800">
-                      {d}
-                      {index === adjustedCurrentDay && (
-                        <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                          Today
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-2 w-64">
-                      <div className="space-y-2">
-                        {entries.filter(e => formatDay(e.date) === d).sort((a,b) => (a.start_time||'').localeCompare(b.start_time||'')).map((e,idx) => (
-                          <div key={idx} className="text-gray-700">
-                            {to12h(e.start_time)} - {to12h(e.end_time)}
-                          </div>
-                        ))}
-                        {entries.filter(e => formatDay(e.date) === d).length === 0 && 
-                          <span className="text-xs text-gray-400 italic">No shifts</span>
-                        }
-                      </div>
-                    </td>
-                    <td className="py-3 px-2">
-                      <div className="space-y-2">
-                        {entries.filter(e => formatDay(e.date) === d).sort((a,b) => (a.start_time||'').localeCompare(b.start_time||'')).map((e,idx) => (
-                          <div key={idx} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium inline-block">
-                            {String(e.location_id || '—')}
-                          </div>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {days.map((d, index) => {
+                  const dayEntries = entries.filter(e => formatDay(e.date) === d);
+                  return (
+                    <tr 
+                      key={d} 
+                      className={`border-b border-gray-100 hover:bg-gray-50 ${
+                        index === adjustedCurrentDay ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''
+                      }`}
+                    >
+                      <td className="py-3 px-2 w-32 font-medium text-gray-800">
+                        {d}
+                        {index === adjustedCurrentDay && (
+                          <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                            Today
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-2 w-32">
+                        <div className="space-y-2">
+                          {dayEntries.map((e, idx) => (
+                            <div key={idx} className="text-gray-700">
+                              {to12h(e.start_time)}
+                            </div>
+                          ))}
+                          {dayEntries.length === 0 && 
+                            <span className="text-xs text-gray-400 italic">—</span>
+                          }
+                        </div>
+                      </td>
+                      <td className="py-3 px-2 w-32">
+                        <div className="space-y-2">
+                          {dayEntries.map((e, idx) => (
+                            <div key={idx} className="text-gray-700">
+                              {to12h(e.end_time)}
+                            </div>
+                          ))}
+                          {dayEntries.length === 0 && 
+                            <span className="text-xs text-gray-400 italic">—</span>
+                          }
+                        </div>
+                      </td>
+                      <td className="py-3 px-2">
+                        <div className="space-y-2">
+                          {dayEntries.map((e, idx) => (
+                            <div key={idx} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium inline-block">
+                              {String(e.location_id || '—')}
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -256,7 +272,7 @@ export default function Shifts() {
   const refresh = async () => {
     const [s, live] = await Promise.all([
       api.get('/shifts/me'),
-      api.get('/schedules/me'), // This already filters out drafts (includeDraft: false)
+      api.get('/schedules/me'), // This now returns only confirmed schedules
     ]);
     setShifts(s.data);
     setSchedule(live.data);
@@ -401,6 +417,12 @@ export default function Shifts() {
     return weekEntries;
   }, [schedule]);
 
+  // Get today's shift
+  const todaysShift = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return currentWeekSchedule.find(s => s.date === today);
+  }, [currentWeekSchedule]);
+
   // Calculate total hours for current week
   const currentWeekHours = useMemo(() => {
     return currentWeekSchedule.reduce((total, entry) => {
@@ -496,33 +518,41 @@ export default function Shifts() {
         }
       >
         {error && <div className="text-red-600 text-sm mb-3 p-3 bg-red-50 rounded border border-red-200">{error}</div>}
-        <div className="text-sm text-gray-600 space-y-2">
+        <div className="text-sm text-gray-600 space-y-2 mb-4">
           <p>• Automatically captures your current date, time, and location</p>
           <p>• Uses high-accuracy GPS positioning</p>
         </div>
+        
+        {/* Today's Shift Snippet */}
+        {todaysShift ? (
+          <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+            <h4 className="font-medium text-blue-800 mb-2">Today's Shift</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="text-blue-600 font-medium">Start Time:</span>
+                <span className="ml-2 text-blue-800">{to12h(todaysShift.start_time)}</span>
+              </div>
+              <div>
+                <span className="text-blue-600 font-medium">End Time:</span>
+                <span className="ml-2 text-blue-800">{to12h(todaysShift.end_time)}</span>
+              </div>
+              <div>
+                <span className="text-blue-600 font-medium">Location:</span>
+                <span className="ml-2 text-blue-800">Location {todaysShift.location_id || '—'}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+            <h4 className="font-medium text-gray-800 mb-2">Today's Shift</h4>
+            <p className="text-sm text-gray-600">No shift scheduled for today</p>
+          </div>
+        )}
       </Card>
 
-      <Card 
-        title="My Live Schedule" 
-        actions={
-          <div className="space-x-3">
-            <button 
-              onClick={exportExcel} 
-              className="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 transition-colors"
-            >
-              Export to Excel
-            </button>
-            <button 
-              onClick={exportPDF} 
-              className="bg-gray-800 text-white px-3 py-2 rounded hover:bg-gray-900 transition-colors"
-            >
-              Export to PDF
-            </button>
-          </div>
-        }
-      >
+      <Card title="My Live Schedule">
         {currentWeekSchedule.length === 0 ? (
-          <div className="text-sm text-gray-500 text-center py-8">No confirmed schedules for this week.</div>
+          <div className="text-sm text-gray-500 text-center py-8">No confirmed schedules this week</div>
         ) : (
           <div className="space-y-4" ref={scheduleRef}>
             {/* Summary Information */}
@@ -554,7 +584,8 @@ export default function Shifts() {
                 <thead>
                   <tr className="text-left border-b-2 border-gray-200">
                     <th className="py-3 px-2 font-semibold text-gray-700">Day</th>
-                    <th className="py-3 px-2 font-semibold text-gray-700">Time</th>
+                    <th className="py-3 px-2 font-semibold text-gray-700">Start Time</th>
+                    <th className="py-3 px-2 font-semibold text-gray-700">End Time</th>
                     <th className="py-3 px-2 font-semibold text-gray-700">Location</th>
                   </tr>
                 </thead>
@@ -563,6 +594,7 @@ export default function Shifts() {
                     const currentDay = new Date().getDay();
                     const adjustedCurrentDay = (currentDay + 1) % 7;
                     const isToday = index === adjustedCurrentDay;
+                    const dayEntries = currentWeekSchedule.filter(e => formatDay(e.date) === d);
                     
                     return (
                       <tr 
@@ -579,21 +611,33 @@ export default function Shifts() {
                             </span>
                           )}
                         </td>
-                        <td className="py-3 px-2 w-64">
+                        <td className="py-3 px-2 w-32">
                           <div className="space-y-2">
-                            {currentWeekSchedule.filter(e => formatDay(e.date) === d).sort((a,b) => (a.start_time||'').localeCompare(b.start_time||'')).map((e,idx) => (
+                            {dayEntries.map((e, idx) => (
                               <div key={idx} className="text-gray-700">
-                                {to12h(e.start_time)} - {to12h(e.end_time)}
+                                {to12h(e.start_time)}
                               </div>
                             ))}
-                            {currentWeekSchedule.filter(e => formatDay(e.date) === d).length === 0 && 
-                              <span className="text-xs text-gray-400 italic">No shifts</span>
+                            {dayEntries.length === 0 && 
+                              <span className="text-xs text-gray-400 italic">—</span>
+                            }
+                          </div>
+                        </td>
+                        <td className="py-3 px-2 w-32">
+                          <div className="space-y-2">
+                            {dayEntries.map((e, idx) => (
+                              <div key={idx} className="text-gray-700">
+                                {to12h(e.end_time)}
+                              </div>
+                            ))}
+                            {dayEntries.length === 0 && 
+                              <span className="text-xs text-gray-400 italic">—</span>
                             }
                           </div>
                         </td>
                         <td className="py-3 px-2">
                           <div className="space-y-2">
-                            {currentWeekSchedule.filter(e => formatDay(e.date) === d).sort((a,b) => (a.start_time||'').localeCompare(b.start_time||'')).map((e,idx) => (
+                            {dayEntries.map((e, idx) => (
                               <div key={idx} className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium inline-block">
                                 {String(e.location_id || '—')}
                               </div>
@@ -638,7 +682,25 @@ export default function Shifts() {
         )}
       </Card>
 
-      <Card title="Login History">
+      <Card 
+        title="Login History" 
+        actions={
+          <div className="space-x-3">
+            <button 
+              onClick={exportExcel} 
+              className="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 transition-colors"
+            >
+              Export to Excel
+            </button>
+            <button 
+              onClick={exportPDF} 
+              className="bg-gray-800 text-white px-3 py-2 rounded hover:bg-gray-900 transition-colors"
+            >
+              Export to PDF
+            </button>
+          </div>
+        }
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
