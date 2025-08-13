@@ -5,8 +5,8 @@ import { requireRole } from '../middleware/auth.js';
 const router = Router();
 
 router.get('/me', (req, res) => {
-  // employees get only live schedules
-  res.json(db.listSchedulesForUser(req.user.id, { includeDraft: false }));
+  // employees get only confirmed schedules
+  res.json(db.listSchedulesForUser(req.user.id, { confirmed: true }));
 });
 
 router.get('/user/:id', requireRole('Viewer', 'Manager'), (req, res) => {
@@ -49,6 +49,12 @@ router.get('/draft/:userId/:weekStart', requireRole('Manager'), (req, res) => {
 router.post('/finalize', requireRole('Manager'), (req, res) => {
   const { userId, weekStart } = req.body || {};
   db.finalizeScheduleDraft(userId, weekStart);
+  res.json({ ok: true });
+});
+
+router.post('/confirm', requireRole('Manager'), (req, res) => {
+  const { userId, weekStart } = req.body || {};
+  db.confirmSchedulesForUser(userId, weekStart);
   res.json({ ok: true });
 });
 

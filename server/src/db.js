@@ -113,6 +113,7 @@ function createSchema(database) {
       location_id INTEGER,
       kind TEXT DEFAULT 'Work',
       is_draft INTEGER NOT NULL DEFAULT 1,
+      confirmed INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -143,6 +144,7 @@ function createSchema(database) {
   if (!columnExists(database, 'shifts', 'check_in_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_in_location_name TEXT`);
   if (!columnExists(database, 'shifts', 'check_out_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_out_location_name TEXT`);
   if (!columnExists(database, 'shifts', 'device_type')) database.exec(`ALTER TABLE shifts ADD COLUMN device_type TEXT`);
+  if (!columnExists(database, 'schedules', 'confirmed')) database.exec(`ALTER TABLE schedules ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0`);
   // schedule_drafts table created above if not exists
 }
 
@@ -466,6 +468,13 @@ export const db = {
     this.database.prepare('UPDATE locations SET latitude = ?, longitude = ? WHERE id = ?').run(latitude, longitude, locationId);
     return this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
   },
+  deleteLocation(locationId) {
+    const location = this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
+    if (!location) return null;
+    
+    this.database.prepare('DELETE FROM locations WHERE id = ?').run(locationId);
+    return location;
+  },
   findNearbyLocation(latitude, longitude, maxDistance = 0.1) {
     // maxDistance in kilometers (0.1 km = 100 meters)
     const locations = this.database.prepare('SELECT * FROM locations WHERE latitude IS NOT NULL AND longitude IS NOT NULL').all();
@@ -491,17 +500,25 @@ export const db = {
   },
 
   // Schedules
-  listSchedulesForUser(userId, { includeDraft = true } = {}) {
-    if (includeDraft) {
-      return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? ORDER BY date DESC').all(userId);
+  listSchedulesForUser(userId, { includeDraft = true, confirmed = null } = {}) {
+    let query = 'SELECT * FROM schedules WHERE user_id = ?';
+    const params = [userId];
+    
+    if (confirmed !== null) {
+      query += ' AND confirmed = ?';
+      params.push(confirmed ? 1 : 0);
+    } else if (!includeDraft) {
+      query += ' AND is_draft = 0';
     }
-    return this.database.prepare('SELECT * FROM schedules WHERE user_id = ? AND is_draft = 0 ORDER BY date DESC').all(userId);
+    
+    query += ' ORDER BY date DESC';
+    return this.database.prepare(query).all(...params);
   },
-  createSchedule({ userId, date, start_time, end_time, hours, location_id, kind, is_draft = 1 }) {
+  createSchedule({ userId, date, start_time, end_time, hours, location_id, kind, is_draft = 1, confirmed = 0 }) {
     const now = new Date().toISOString();
     const r = this.database
-      .prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, is_draft, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', is_draft ? 1 : 0, now, now);
+      .prepare(`INSERT INTO schedules (user_id, date, start_time, end_time, hours, location_id, kind, is_draft, confirmed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(userId, date, start_time || null, end_time || null, hours || null, location_id || null, kind || 'Work', is_draft ? 1 : 0, confirmed ? 1 : 0, now, now);
     return this.database.prepare('SELECT * FROM schedules WHERE id = ?').get(r.lastInsertRowid);
   },
   updateSchedule(id, fields) {
@@ -527,6 +544,15 @@ export const db = {
   publishDraftsForUserRange(userId, startDate, endDate) {
     this.database.prepare('UPDATE schedules SET is_draft = 0, updated_at = ? WHERE user_id = ? AND is_draft = 1 AND date >= ? AND date <= ?')
       .run(new Date().toISOString(), userId, startDate, endDate);
+  },
+  confirmSchedulesForUser(userId, weekStart) {
+    const start = new Date(weekStart);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const endDate = end.toISOString().slice(0,10);
+    
+    this.database.prepare('UPDATE schedules SET confirmed = 1, updated_at = ? WHERE user_id = ? AND date >= ? AND date <= ?')
+      .run(new Date().toISOString(), userId, weekStart, endDate);
   },
   saveScheduleDraft(userId, weekStart, entries) {
     const data = JSON.stringify(entries || []);

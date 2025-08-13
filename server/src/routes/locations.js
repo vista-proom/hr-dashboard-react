@@ -42,4 +42,15 @@ router.put('/:id/coordinates', requireRole('Manager'), (req, res) => {
   res.json(location);
 });
 
+router.delete('/:id', requireRole('Manager'), (req, res) => {
+  const locationId = Number(req.params.id);
+  const deletedLocation = db.deleteLocation(locationId);
+  
+  if (!deletedLocation) {
+    return res.status(404).json({ error: 'Location not found' });
+  }
+  
+  res.json({ message: 'Location deleted successfully', deletedLocation });
+});
+
 export default router;
