@@ -49,12 +49,34 @@ router.get('/draft/:userId/:weekStart', requireRole('Manager'), (req, res) => {
 router.post('/finalize', requireRole('Manager'), (req, res) => {
   const { userId, weekStart } = req.body || {};
   db.finalizeScheduleDraft(userId, weekStart);
+  
+  // Emit real-time update to the employee since finalized schedules are now auto-confirmed
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`user-${userId}`).emit('scheduleConfirmed', {
+      userId,
+      weekStart,
+      message: 'Your schedule has been finalized and is now visible'
+    });
+  }
+  
   res.json({ ok: true });
 });
 
 router.post('/confirm', requireRole('Manager'), (req, res) => {
   const { userId, weekStart } = req.body || {};
   db.confirmSchedulesForUser(userId, weekStart);
+  
+  // Emit real-time update to the employee
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`user-${userId}`).emit('scheduleConfirmed', {
+      userId,
+      weekStart,
+      message: 'Your schedule has been confirmed and updated'
+    });
+  }
+  
   res.json({ ok: true });
 });
 

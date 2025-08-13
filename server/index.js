@@ -5,6 +5,8 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import path from 'path';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 
 import { db } from './src/db.js';
 import authRouter from './src/routes/auth.js';
@@ -21,8 +23,17 @@ import { authenticateJWT } from './src/middleware/auth.js';
 dotenv.config();
 
 const app = express();
+const server = createServer(app);
 
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+
+// Initialize Socket.IO
+const io = new Server(server, {
+  cors: {
+    origin: CLIENT_URL,
+    credentials: true
+  }
+});
 
 app.use(cors({ origin: CLIENT_URL, credentials: true }));
 app.use(helmet());
@@ -53,7 +64,26 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/locations', locationsRouter);
 app.use('/api/schedules', schedulesRouter);
 
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  
+  // Join user to their personal room
+  socket.on('join-user', (userId) => {
+    socket.join(`user-${userId}`);
+    console.log(`User ${userId} joined room user-${userId}`);
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// Make io available to routes
+app.set('io', io);
+
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`WebSocket server ready`);
 });

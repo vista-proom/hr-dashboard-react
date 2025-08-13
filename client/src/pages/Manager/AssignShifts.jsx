@@ -132,14 +132,13 @@ export default function AssignShifts() {
     await loadPreview(form.userId);
     setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
     closeModal();
-    showToast('Schedule Saved as Draft');
+    showToast('Schedule Finalized and Published to Employee');
   };
 
   const confirmModalWeek = async () => {
     if (!modalWeekKey) return;
     await saveDraftWeek(modalWeekKey);
     await api.post('/schedules/finalize', { userId: Number(form.userId), weekStart: modalWeekKey });
-    await api.post('/schedules/confirm', { userId: Number(form.userId), weekStart: modalWeekKey });
     await loadPreview(form.userId);
     setDraftByWeek((m) => { const n = { ...m }; delete n[modalWeekKey]; return n; });
     closeModal();
