@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { io } from 'socket.io-client';
 import api from '../../api';
 import Card from '../../components/Card';
 import { useAuth } from '../../context/AuthContext';
@@ -255,7 +256,7 @@ function WeekSchedule({ week, entries, isExpanded, onToggle }) {
 }
 
 export default function Shifts() {
-  const { getCurrentLocation, getDeviceType } = useAuth();
+  const { getCurrentLocation, getDeviceType, user } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [schedule, setSchedule] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -267,18 +268,56 @@ export default function Shifts() {
   const [showWeekSelection, setShowWeekSelection] = useState(false);
   const [selectedWeeks, setSelectedWeeks] = useState([]);
   const [expandedWeeks, setExpandedWeeks] = useState([]);
+  const [socket, setSocket] = useState(null);
   const scheduleRef = useRef(null);
 
   const refresh = async () => {
-    const [s, live] = await Promise.all([
-      api.get('/shifts/me'),
-      api.get('/schedules/me'), // This now returns only confirmed schedules
-    ]);
-    setShifts(s.data);
-    setSchedule(live.data);
-    setLoading(false);
+    try {
+      console.log('Refreshing employee data...');
+      const [s, live] = await Promise.all([
+        api.get('/shifts/me'),
+        api.get('/schedules/me'), // This now returns only confirmed schedules
+      ]);
+      console.log('Shifts data:', s.data);
+      console.log('Schedule data:', live.data);
+      setShifts(s.data);
+      setSchedule(live.data);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      setError('Failed to refresh data. Please try again.');
+      setLoading(false);
+    }
   };
 
+  // WebSocket connection for real-time updates
+  useEffect(() => {
+    if (!user) return;
+    
+    const newSocket = io(import.meta.env.VITE_API_URL || 'http://localhost:4000', {
+      withCredentials: true
+    });
+    
+    // Join user's personal room
+    newSocket.emit('join-user', user.id);
+    
+    // Listen for schedule confirmation events
+    newSocket.on('scheduleConfirmed', (data) => {
+      console.log('Schedule confirmed:', data);
+      // Refresh data immediately
+      refresh();
+      // Show success message
+      setSuccessMessage('Schedule updated successfully!');
+      setShowSuccessPopup(true);
+    });
+    
+    setSocket(newSocket);
+    
+    return () => {
+      newSocket.close();
+    };
+  }, [user]);
+  
   useEffect(() => { refresh(); }, []);
 
   const checkIn = async () => {

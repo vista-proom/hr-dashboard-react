@@ -577,7 +577,7 @@ export const db = {
     const entries = this.getScheduleDraft(userId, weekStart);
     // remove existing live schedules for range
     this.database.prepare('DELETE FROM schedules WHERE user_id = ? AND date >= ? AND date <= ?').run(userId, weekStart, endDate);
-    // insert as live
+    // insert as live and confirmed
     for (const e of entries) {
       this.createSchedule({
         userId,
@@ -588,6 +588,7 @@ export const db = {
         location_id: e.location_id,
         kind: e.kind || 'Work',
         is_draft: 0,
+        confirmed: 1, // Automatically confirm when finalized
       });
     }
     this.deleteScheduleDraft(userId, weekStart);
