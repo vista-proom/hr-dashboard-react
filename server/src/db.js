@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 function createConnection() {
   return new Database('database.sqlite');
@@ -237,6 +237,16 @@ export const db = {
 
   getUserByEmail(email) {
     const row = this.database.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    return row ? mapUserRow(row, this.database) : null;
+  },
+
+  getUserByEmailForAuth(email) {
+    const row = this.database.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    return row;
+  },
+
+  getUserDetails(id) {
+    const row = this.database.prepare('SELECT * FROM users WHERE id = ?').get(id);
     return row ? mapUserRow(row, this.database) : null;
   },
 
@@ -668,5 +678,15 @@ export const db = {
       pendingRequests: pendingRequests.count,
       totalEmployees: employees.length
     };
+  },
+
+  // Get all user stats for Viewer/Manager
+  getAllUserStats() {
+    const users = this.listUsers();
+    return users.map(user => ({
+      ...user,
+      tasks: this.listTasksForUser(user.id),
+      requests: this.listRequestsForUser(user.id)
+    }));
   }
 };

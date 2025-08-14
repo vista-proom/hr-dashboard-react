@@ -4,6 +4,17 @@ import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
+// Get shifts for the logged-in employee (same as /me)
+router.get('/', (req, res) => {
+  try {
+    const shifts = db.getEmployeeShifts(req.user.id);
+    res.json(shifts);
+  } catch (error) {
+    console.error('Error fetching employee shifts:', error);
+    res.status(500).json({ error: 'Failed to fetch shifts' });
+  }
+});
+
 // Get shifts for the logged-in employee
 router.get('/me', (req, res) => {
   try {

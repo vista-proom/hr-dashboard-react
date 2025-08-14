@@ -4,6 +4,13 @@ import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
+// List shifts for current user (same as /me)
+router.get('/', (req, res) => {
+  const userId = req.user.id;
+  const shifts = db.listShiftsForUserWithLocations(userId);
+  res.json(shifts);
+});
+
 // Employee: Check-in (creates a new shift if none open)
 router.post('/check-in', (req, res) => {
   const userId = req.user.id;
