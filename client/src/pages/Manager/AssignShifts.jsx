@@ -347,14 +347,6 @@ export default function AssignShifts() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Assign Shift</h1>
-        <button
-          type="button"
-          onClick={() => setIsLocationModalOpen(true)}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-        >
-          <PlusIcon className="h-4 w-4 mr-2" />
-          Add Location
-        </button>
       </div>
 
       {/* Success Message */}
@@ -381,11 +373,22 @@ export default function AssignShifts() {
       )}
 
       {/* Assign Shift Form */}
-      <Card>
+      <Card
+        title="Assign Shift"
+        actions={
+          <button
+            type="button"
+            onClick={() => setIsLocationModalOpen(true)}
+            className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+          >
+            <PlusIcon className="h-4 w-4 mr-2" />
+            Add Location
+          </button>
+        }
+      >
         <form onSubmit={handleSubmit} className="space-y-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Assign Shift</h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Row 1: Employee, Date, Working Hours */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Employee Selection */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -432,7 +435,10 @@ export default function AssignShifts() {
                 {formatWorkingHours(workingHours)}
               </div>
             </div>
+          </div>
 
+          {/* Row 2: Start Time, End Time, Location */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Start Time */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -483,8 +489,10 @@ export default function AssignShifts() {
                 ))}
               </select>
             </div>
+          </div>
 
-            {/* Kind */}
+          {/* Row 3: Kind */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Kind
@@ -505,7 +513,14 @@ export default function AssignShifts() {
           </div>
 
           {/* Form Buttons */}
-          <div className="flex justify-end space-x-3 pt-4">
+          <div className="flex items-center space-x-3 pt-2">
+            <button
+              type="submit"
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              <CheckIcon className="h-4 w-4 mr-2" />
+              Save Shift
+            </button>
             <button
               type="button"
               onClick={clearForm}
@@ -514,33 +529,24 @@ export default function AssignShifts() {
               <XMarkIcon className="h-4 w-4 mr-2" />
               Clear
             </button>
-            <button
-              type="submit"
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <CheckIcon className="h-4 w-4 mr-2" />
-              Save Shift
-            </button>
           </div>
         </form>
       </Card>
 
       {/* Schedule Preview - Current Week Only */}
       <Card>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Schedule Preview - Current Week Only
-          {selectedEmployee && (
-            <span className="text-sm font-normal text-gray-600 ml-2">
-              (Filtered for {employees.find(e => e.id === Number(selectedEmployee))?.name})
-            </span>
-          )}
-        </h2>
-        
-        {/* Summary Tabs */}
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Schedule Preview - Current Week Only</h2>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          Employee: {selectedEmployee ? (employees.find(e => e.id === Number(selectedEmployee))?.name || '') : 'All employees'}
+        </p>
+
+        {/* Summary */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           {/* Live Weekly Summary */}
-          <div className="bg-blue-50 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-blue-900 mb-2">Live Weekly Summary</h3>
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+            <h3 className="text-sm font-medium text-blue-900 mb-1">Live Weekly Summary</h3>
             <div className="text-2xl font-bold text-blue-900">
               {formatWorkingHours(getFilteredTotalHours())}
             </div>
@@ -548,7 +554,7 @@ export default function AssignShifts() {
           </div>
 
           {/* Hours by Location */}
-          <div className="bg-green-50 rounded-lg p-4">
+          <div className="bg-green-50 border border-green-100 rounded-lg p-4">
             <h3 className="text-sm font-medium text-green-900 mb-2">Hours by Location</h3>
             <div className="space-y-2">
               {Object.entries(getFilteredHoursByLocation()).map(([location, hours]) => (
@@ -558,36 +564,29 @@ export default function AssignShifts() {
                 </div>
               ))}
               {Object.keys(getFilteredHoursByLocation()).length === 0 && (
-                <div className="text-sm text-green-600">No shifts assigned</div>
+                <div className="text-sm text-green-700">No locations assigned yet</div>
               )}
             </div>
           </div>
         </div>
 
         {/* Week View */}
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
-          <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+        <div className="border border-gray-200 rounded-lg">
+          <div className="bg-white px-4 py-3 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-sm font-medium text-gray-900">Week View</h3>
+            <button type="button" className="text-xs text-blue-600 hover:underline">Edit</button>
           </div>
-          <div className="divide-y divide-gray-200">
+          <div className="p-4 space-y-3">
             {getFilteredShifts().map((shift) => (
-              <div key={shift.id} className="px-4 py-3 flex items-center justify-between">
+              <div key={shift.id} className="bg-white border border-gray-200 rounded-md px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center space-x-4">
-                  <div className="text-sm font-medium text-gray-900 w-20">
+                  <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-gray-100 text-gray-800 text-xs font-medium w-20">
                     {getDayName(shift.date)}
-                  </div>
-                  <div className="text-sm text-gray-600 w-32">
-                    {shift.employee}
-                  </div>
-                  <div className="text-sm text-gray-600 w-24">
-                    {formatTime(shift.startTime)} - {formatTime(shift.endTime)}
-                  </div>
-                  <div className="text-sm text-gray-600 w-32">
-                    {shift.location}
-                  </div>
-                  <div className="text-sm text-gray-600 w-20">
-                    {shift.kind}
-                  </div>
+                  </span>
+                  <span className="text-sm text-gray-700 w-32">{shift.employee}</span>
+                  <span className="text-sm text-gray-600 w-28">{formatTime(shift.startTime)} - {formatTime(shift.endTime)}</span>
+                  <span className="text-sm text-gray-600 w-32">{shift.location}</span>
+                  <span className="text-sm text-gray-600 w-20">{shift.kind}</span>
                 </div>
                 <div className="flex items-center space-x-2">
                   {shift.status === 'draft' && (
@@ -615,17 +614,17 @@ export default function AssignShifts() {
         <div className="flex justify-end space-x-3 pt-6">
           <button
             type="button"
-            onClick={resetSchedule}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            Reset Schedule
-          </button>
-          <button
-            type="button"
             onClick={saveSchedule}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
             Save Schedule
+          </button>
+          <button
+            type="button"
+            onClick={resetSchedule}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            Reset Schedule
           </button>
         </div>
       </Card>
