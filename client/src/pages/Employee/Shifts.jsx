@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import api from '../../api';
 import Card from '../../components/Card';
 import { useAuth } from '../../context/AuthContext';
@@ -18,6 +20,7 @@ export default function Shifts() {
   const { user, getCurrentLocation, getDeviceType } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [loginHistory, setLoginHistory] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [checkingIn, setCheckingIn] = useState(false);
@@ -32,12 +35,14 @@ export default function Shifts() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [shiftsRes, loginHistoryRes] = await Promise.all([
+      const [shiftsRes, loginHistoryRes, locationsRes] = await Promise.all([
         api.get('/employee-shifts/me'),
-        api.get('/auth/login-history')
+        api.get('/auth/login-history'),
+        api.get('/locations')
       ]);
       setShifts(shiftsRes.data);
       setLoginHistory(loginHistoryRes.data);
+      setLocations(locationsRes.data || []);
     } catch (error) {
       console.error('Error loading data:', error);
       setError('Failed to load data. Please try again.');
@@ -104,19 +109,30 @@ export default function Shifts() {
     }
   };
 
-  const exportToExcel = () => {
-    const shiftsData = shifts.map(shift => ({
-      Date: new Date(shift.date).toLocaleDateString('en-GB'),
-      'Start Time': formatTime12h(shift.start_time),
-      'End Time': formatTime12h(shift.end_time),
-      Location: shift.location_name || '—',
-      'Created At': new Date(shift.created_at).toLocaleDateString('en-GB')
-    }));
+  const exportScheduleToPDF = () => {
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const title = `My Live Schedule - ${user?.name || ''}`;
+    doc.setFontSize(14);
+    doc.text(title, 40, 40);
 
-    const ws = XLSX.utils.json_to_sheet(shiftsData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Shifts');
-    XLSX.writeFile(wb, `shifts_${user?.name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const rows = shifts.map(shift => ([
+      new Date(shift.date).toLocaleDateString('en-GB'),
+      formatTime12h(shift.start_time),
+      formatTime12h(shift.end_time),
+      shift.location_name || '—'
+    ]));
+
+    doc.autoTable({
+      startY: 60,
+      head: [['Date', 'Start Time', 'End Time', 'Location']],
+      body: rows,
+      theme: 'grid',
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [59, 130, 246] },
+      columnStyles: { 0: { cellWidth: 120 }, 1: { cellWidth: 120 }, 2: { cellWidth: 120 }, 3: { cellWidth: 'auto' } }
+    });
+
+    doc.save(`my_live_schedule_${new Date().toISOString().slice(0,10)}.pdf`);
   };
 
   const exportLoginHistoryToExcel = () => {
@@ -154,6 +170,36 @@ export default function Shifts() {
         return <ComputerDesktopIcon className="h-5 w-5 text-gray-600" />;
     }
   };
+
+  // Proximity helpers for Login History location rendering
+  const distanceInKm = (lat1, lon1, lat2, lon2) => {
+    if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return Infinity;
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const nearestSavedLocation = (lat, lng) => {
+    if (lat == null || lng == null) return null;
+    let nearest = null;
+    let minKm = Infinity;
+    locations.forEach(loc => {
+      if (loc.latitude != null && loc.longitude != null) {
+        const d = distanceInKm(lat, lng, loc.latitude, loc.longitude);
+        if (d < minKm) {
+          minKm = d;
+          nearest = { ...loc, distanceKm: d };
+        }
+      }
+    });
+    if (nearest && nearest.distanceKm <= 0.1) return nearest; // within 100m
+    return null;
+  };
+
+  const googleMapsLink = (lat, lng) => `https://maps.google.com/?q=${lat},${lng}`;
 
   const getTodayShifts = () => {
     const today = new Date().toISOString().slice(0, 10);
@@ -268,10 +314,10 @@ export default function Shifts() {
         title="My Live Schedule" 
         actions={
           <button
-            onClick={exportToExcel}
-            className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm"
+            onClick={exportScheduleToPDF}
+            className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm"
           >
-            Export to Excel
+            Export to PDF
           </button>
         }
       >
@@ -351,17 +397,29 @@ export default function Shifts() {
                 <th className="text-left py-3 px-4 font-medium text-gray-700">Device / Browser Info</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-700">IP Address</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-700">Logout Time</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">In Location</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Location</th>
               </tr>
             </thead>
             <tbody>
               {loginHistory.length === 0 ? (
                 <tr className="border-b border-gray-100">
-                  <td colSpan="4" className="py-8 px-4 text-center text-gray-500 italic">
+                  <td colSpan="6" className="py-8 px-4 text-center text-gray-500 italic">
                     No login history available
                   </td>
                 </tr>
               ) : (
-                loginHistory.map((login) => (
+                loginHistory.map((login) => {
+                  // try to find a shift on the same date for in/out coordinates
+                  const loginDateISO = new Date(login.login_timestamp).toISOString().slice(0,10);
+                  const relatedShift = shifts.find(s => s.check_in_date === loginDateISO || s.check_out_date === loginDateISO);
+                  const inLat = relatedShift?.check_in_lat ?? null;
+                  const inLng = relatedShift?.check_in_lng ?? null;
+                  const outLat = relatedShift?.check_out_lat ?? null;
+                  const outLng = relatedShift?.check_out_lng ?? null;
+                  const nearIn = nearestSavedLocation(inLat, inLng);
+                  const nearOut = nearestSavedLocation(outLat, outLng);
+                  return (
                   <tr key={login.id} className="border-b border-gray-100">
                     <td className="py-3 px-4">
                       <div className="flex items-center">
@@ -390,8 +448,34 @@ export default function Shifts() {
                         <span className="text-green-600 text-xs font-medium">Active Session</span>
                       )}
                     </td>
+                    <td className="py-3 px-4">
+                      {inLat != null && inLng != null ? (
+                        nearIn ? (
+                          <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearIn.latitude},${nearIn.longitude}`} target="_blank" rel="noreferrer">
+                            {nearIn.name}
+                          </a>
+                        ) : (
+                          <a className="text-blue-600 hover:underline" href={googleMapsLink(inLat, inLng)} target="_blank" rel="noreferrer">In Location</a>
+                        )
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {outLat != null && outLng != null ? (
+                        nearOut ? (
+                          <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearOut.latitude},${nearOut.longitude}`} target="_blank" rel="noreferrer">
+                            {nearOut.name}
+                          </a>
+                        ) : (
+                          <a className="text-blue-600 hover:underline" href={googleMapsLink(outLat, outLng)} target="_blank" rel="noreferrer">Out Location</a>
+                        )
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
                   </tr>
-                ))
+                ); })
               )}
             </tbody>
           </table>
