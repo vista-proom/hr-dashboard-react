@@ -11,7 +11,8 @@ import {
   PlusIcon,
   TrashIcon,
   CheckIcon,
-  XMarkIcon
+  XMarkIcon,
+  PencilSquareIcon
 } from '@heroicons/react/24/outline';
 
 export default function AssignShifts() {
@@ -45,6 +46,16 @@ export default function AssignShifts() {
   // Draft shift state for real-time preview
   const [draftShift, setDraftShift] = useState(null);
 
+  // NEW: local preview shifts that are not yet submitted to backend
+  const [previewShifts, setPreviewShifts] = useState([]);
+
+  // NEW: modal to show preview summary and table
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+
+  // NEW: inline editing state for preview shifts
+  const [editingShiftId, setEditingShiftId] = useState(null);
+  const [editFields, setEditFields] = useState({ startTime: '', endTime: '', locationId: '', kind: 'Work' });
+
   const shiftKinds = ['Work', 'DayOff', 'Sick', 'Vacation', 'Training'];
 
   useEffect(() => {
@@ -56,7 +67,7 @@ export default function AssignShifts() {
     calculateWorkingHours();
   }, [startTime, endTime]);
 
-  // Update draft shift when form changes
+  // Update draft shift when form changes (kept for immediate visual feedback if needed)
   useEffect(() => {
     if (selectedEmployee && selectedDate && startTime && endTime && selectedLocation) {
       const employee = employees.find(e => e.id === Number(selectedEmployee));
@@ -66,11 +77,14 @@ export default function AssignShifts() {
         id: 'draft',
         date: selectedDate,
         employee: employee?.name || '',
+        employeeId: employee?.id || null,
         startTime: startTime,
         endTime: endTime,
         location: location?.name || '',
+        locationId: location?.id || null,
         kind: selectedKind,
-        status: 'draft'
+        status: 'draft',
+        isPreview: true
       });
     } else {
       setDraftShift(null);
@@ -107,8 +121,8 @@ export default function AssignShifts() {
     // This would typically call an API to get the current week's schedule
     // For now, we'll create mock data to demonstrate the UI
     const mockShifts = [
-      { id: 1, date: '2025-08-14', employee: 'Alice Employee', startTime: '09:00', endTime: '17:00', location: 'Main Office', kind: 'Work', status: 'confirmed' },
-      { id: 2, date: '2025-08-15', employee: 'Bob Employee', startTime: '08:00', endTime: '16:00', location: 'Warehouse A', kind: 'Work', status: 'draft' },
+      { id: 1, date: '2025-08-14', employee: 'Alice Employee', employeeId: 2, startTime: '09:00', endTime: '17:00', location: 'Main Office', locationId: 1, kind: 'Work', status: 'confirmed' },
+      { id: 2, date: '2025-08-15', employee: 'Bob Employee', employeeId: 3, startTime: '08:00', endTime: '16:00', location: 'Warehouse A', locationId: 2, kind: 'Work', status: 'confirmed' },
     ];
     
     setCurrentWeekShifts(mockShifts);
@@ -158,6 +172,7 @@ export default function AssignShifts() {
     return true;
   };
 
+  // Keep original submit logic for backend push; we will call similar API in preview submit
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -210,6 +225,37 @@ export default function AssignShifts() {
     }
   };
 
+  // NEW: Save to local preview only
+  const handleSaveToPreview = (e) => {
+    e.preventDefault();
+    setError('');
+    if (!validateForm()) return;
+
+    const employee = employees.find(e => e.id === Number(selectedEmployee));
+    const location = locations.find(l => l.id === Number(selectedLocation));
+
+    const newPreviewShift = {
+      id: `preview_${Date.now()}`,
+      date: selectedDate,
+      employee: employee?.name || '',
+      employeeId: employee?.id,
+      startTime,
+      endTime,
+      location: location?.name || '',
+      locationId: location?.id,
+      kind: selectedKind,
+      status: 'draft',
+      isPreview: true
+    };
+
+    setPreviewShifts(prev => [...prev, newPreviewShift]);
+
+    // Brief success notification (local)
+    setSuccessMessage('Shift added to preview. Open Preview Schedule to submit.');
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+  };
+
   const clearForm = () => {
     setSelectedEmployee('');
     setSelectedDate(new Date().toISOString().slice(0, 10));
@@ -230,11 +276,11 @@ export default function AssignShifts() {
   };
 
   const resetSchedule = () => {
-    // This would typically reset the entire week's schedule
-    loadCurrentWeekSchedule();
-    setSuccessMessage('Weekly schedule reset successfully!');
+    // NEW behavior: clear only local preview shifts
+    setPreviewShifts([]);
+    setSuccessMessage('Preview cleared. No changes were submitted.');
     setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 5000);
+    setTimeout(() => setShowSuccess(false), 3000);
   };
 
   const handleSaveLocation = async (locationData) => {
@@ -275,63 +321,156 @@ export default function AssignShifts() {
     return date.toLocaleDateString('en-US', { weekday: 'short' });
   };
 
-  // Filter shifts for selected employee
-  const getFilteredShifts = () => {
-    if (!selectedEmployee) {
-      return currentWeekShifts;
-    }
-    
-    const employee = employees.find(e => e.id === Number(selectedEmployee));
-    if (!employee) return currentWeekShifts;
-    
-    // Filter existing shifts for the selected employee
-    const employeeShifts = currentWeekShifts.filter(shift => 
-      shift.employee === employee.name
-    );
-    
-    // Add draft shift if it exists and matches the selected employee
-    if (draftShift && draftShift.employee === employee.name) {
-      return [...employeeShifts, draftShift];
-    }
-    
-    return employeeShifts;
+  // Week helpers (Saturday to Friday)
+  const toDate = (s) => new Date(`${s}T00:00:00`);
+  const toISO = (d) => d.toISOString().slice(0, 10);
+
+  const getWeekStartSaturday = (s) => {
+    const d = toDate(s);
+    const offset = (d.getDay() + 1) % 7; // 0 for Sat, 1 for Sun, ... 6 for Fri
+    const start = new Date(d);
+    start.setDate(d.getDate() - offset - 1 + 1); // retain same expression, resolves to d - offset
+    start.setHours(0,0,0,0);
+    return start;
   };
 
-  // Calculate total hours for filtered shifts
+  const getWeekDates = (s) => {
+    const start = getWeekStartSaturday(s);
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      days.push({ date: toISO(d), dateObj: d });
+    }
+    return days; // Saturday -> Friday
+  };
+
+  const getWeekNumber = (s) => {
+    const d = toDate(s);
+    const startOfYear = new Date(d.getFullYear(), 0, 1);
+    const startSaturday = getWeekStartSaturday(toISO(startOfYear));
+    const diffDays = Math.floor((d - startSaturday) / (1000 * 60 * 60 * 24));
+    return Math.floor(diffDays / 7) + 1;
+  };
+
+  // Calculate hours for a single shift
+  const getShiftHours = (shift) => {
+    if (!shift.startTime || !shift.endTime) return 0;
+    const start = new Date(`2000-01-01T${shift.startTime}`);
+    const end = new Date(`2000-01-01T${shift.endTime}`);
+    return Math.max(0, (end - start) / (1000 * 60 * 60));
+  };
+
+  // Filter shifts for selected employee including local preview
+  const getFilteredShifts = () => {
+    const all = [...currentWeekShifts, ...previewShifts];
+    if (!selectedEmployee) return all;
+    const employee = employees.find(e => e.id === Number(selectedEmployee));
+    if (!employee) return all;
+    return all.filter(s => s.employee === employee.name);
+  };
+
+  // Calculate total hours for filtered shifts (existing + preview)
   const getFilteredTotalHours = () => {
     const filteredShifts = getFilteredShifts();
-    let total = 0;
-    
-    filteredShifts.forEach(shift => {
-      if (shift.startTime && shift.endTime) {
-        const start = new Date(`2000-01-01T${shift.startTime}`);
-        const end = new Date(`2000-01-01T${shift.endTime}`);
-        const diffMs = end - start;
-        const diffHours = diffMs / (1000 * 60 * 60);
-        total += diffHours;
-      }
-    });
-    
-    return total;
+    return filteredShifts.reduce((sum, s) => sum + getShiftHours(s), 0);
   };
 
-  // Calculate hours by location for filtered shifts
+  // Calculate hours by location for filtered shifts (existing + preview)
   const getFilteredHoursByLocation = () => {
     const filteredShifts = getFilteredShifts();
     const locationHours = {};
-    
     filteredShifts.forEach(shift => {
       if (shift.startTime && shift.endTime && shift.location) {
-        const start = new Date(`2000-01-01T${shift.startTime}`);
-        const end = new Date(`2000-01-01T${shift.endTime}`);
-        const diffMs = end - start;
-        const diffHours = diffMs / (1000 * 60 * 60);
-        
-        locationHours[shift.location] = (locationHours[shift.location] || 0) + diffHours;
+        const hrs = getShiftHours(shift);
+        locationHours[shift.location] = (locationHours[shift.location] || 0) + hrs;
       }
     });
-    
     return locationHours;
+  };
+
+  // Group shifts by date for the selected week (Saturday -> Friday)
+  const getWeekShiftsGrouped = () => {
+    const days = getWeekDates(selectedDate);
+    const byDate = {};
+    days.forEach(d => { byDate[d.date] = []; });
+    const filtered = getFilteredShifts();
+    filtered.forEach(s => {
+      if (byDate[s.date]) byDate[s.date].push(s);
+    });
+    // sort each day by startTime
+    Object.values(byDate).forEach(arr => arr.sort((a,b) => (a.startTime||'') > (b.startTime||'') ? 1 : -1));
+    return { days, byDate };
+  };
+
+  // Edit preview shift inline
+  const beginEditShift = (shift) => {
+    setEditingShiftId(shift.id);
+    setEditFields({ startTime: shift.startTime, endTime: shift.endTime, locationId: shift.locationId, kind: shift.kind });
+  };
+
+  const cancelEditShift = () => {
+    setEditingShiftId(null);
+  };
+
+  const saveEditShift = () => {
+    setPreviewShifts(prev => prev.map(s => s.id === editingShiftId ? {
+      ...s,
+      startTime: editFields.startTime,
+      endTime: editFields.endTime,
+      locationId: Number(editFields.locationId),
+      location: locations.find(l => l.id === Number(editFields.locationId))?.name || s.location,
+      kind: editFields.kind
+    } : s));
+    setEditingShiftId(null);
+  };
+
+  const removePreviewShift = (id) => {
+    setPreviewShifts(prev => prev.filter(s => s.id !== id));
+  };
+
+  // Delete location
+  const handleDeleteLocation = async (id) => {
+    try {
+      await api.delete(`/locations/${id}`);
+      setLocations(prev => prev.filter(l => l.id !== id));
+    } catch (err) {
+      console.error('Delete location failed', err);
+      setError('Failed to delete location.');
+    }
+  };
+
+  // Submit all preview shifts to backend using existing API
+  const submitPreviewShifts = async () => {
+    try {
+      const shiftsToSubmit = [...previewShifts];
+      for (const preview of shiftsToSubmit) {
+        await api.post('/employee-shifts/assign', {
+          employeeId: preview.employeeId,
+          employeeName: preview.employee,
+          shiftData: {
+            date: preview.date,
+            startTime: preview.startTime,
+            endTime: preview.endTime,
+            locationId: preview.locationId,
+            locationName: preview.location,
+            kind: preview.kind
+          }
+        });
+      }
+
+      // Merge into currentWeekShifts and clear preview
+      setCurrentWeekShifts(prev => [...prev, ...shiftsToSubmit.map(s => ({ ...s, status: 'confirmed' }))]);
+      setPreviewShifts([]);
+      setIsPreviewModalOpen(false);
+      setSuccessMessage('Shifts submitted successfully.');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 4000);
+
+    } catch (err) {
+      console.error('Error submitting shifts', err);
+      setError('Failed to submit shifts.');
+    }
   };
 
   if (loading) {
@@ -386,7 +525,7 @@ export default function AssignShifts() {
           </button>
         }
       >
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSaveToPreview} className="space-y-6">
           {/* Row 1: Employee, Date, Working Hours */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Employee Selection */}
@@ -542,82 +681,87 @@ export default function AssignShifts() {
           Employee: {selectedEmployee ? (employees.find(e => e.id === Number(selectedEmployee))?.name || '') : 'All employees'}
         </p>
 
-        {/* Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          {/* Live Weekly Summary */}
-          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-blue-900 mb-1">Live Weekly Summary</h3>
-            <div className="text-2xl font-bold text-blue-900">
-              {formatWorkingHours(getFilteredTotalHours())}
-            </div>
-            <div className="text-sm text-blue-700">Total working hours this week</div>
-          </div>
-
-          {/* Hours by Location */}
-          <div className="bg-green-50 border border-green-100 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-green-900 mb-2">Hours by Location</h3>
-            <div className="space-y-2">
-              {Object.entries(getFilteredHoursByLocation()).map(([location, hours]) => (
-                <div key={location} className="flex justify-between text-sm">
-                  <span className="text-green-700">{location}</span>
-                  <span className="font-medium text-green-900">{formatWorkingHours(hours)}</span>
-                </div>
-              ))}
-              {Object.keys(getFilteredHoursByLocation()).length === 0 && (
-                <div className="text-sm text-green-700">No locations assigned yet</div>
-              )}
-            </div>
-          </div>
+        {/* Week Heading */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm text-gray-600">Week #{getWeekNumber(selectedDate)}</div>
+          <div className="text-xs text-gray-500">Saturday to Friday</div>
         </div>
 
-        {/* Week View */}
-        <div className="border border-gray-200 rounded-lg">
-          <div className="bg-white px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-gray-900">Week View</h3>
-            <button type="button" className="text-xs text-blue-600 hover:underline">Edit</button>
-          </div>
-          <div className="p-4 space-y-3">
-            {getFilteredShifts().map((shift) => (
-              <div key={shift.id} className="bg-white border border-gray-200 rounded-md px-4 py-3 flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-md bg-gray-100 text-gray-800 text-xs font-medium w-20">
-                    {getDayName(shift.date)}
-                  </span>
-                  <span className="text-sm text-gray-700 w-32">{shift.employee}</span>
-                  <span className="text-sm text-gray-600 w-28">{formatTime(shift.startTime)} - {formatTime(shift.endTime)}</span>
-                  <span className="text-sm text-gray-600 w-32">{shift.location}</span>
-                  <span className="text-sm text-gray-600 w-20">{shift.kind}</span>
+        {/* Day Boxes: Saturday -> Friday */}
+        {(() => { const { days, byDate } = getWeekShiftsGrouped(); return (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {days.map(({ date, dateObj }) => {
+              const dayShifts = byDate[date] || [];
+              const totalHours = dayShifts.reduce((sum, s) => sum + getShiftHours(s), 0);
+              return (
+                <div key={date} className="bg-white border border-gray-200 rounded-md p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs text-gray-500">{dateObj.toLocaleDateString()}</div>
+                    <div className="text-xs font-medium text-gray-700">{formatWorkingHours(totalHours)}</div>
+                  </div>
+                  <div className="space-y-2">
+                    {dayShifts.length === 0 && (
+                      <div className="text-xs text-gray-400">No shifts</div>
+                    )}
+                    {dayShifts.map(shift => (
+                      <div key={shift.id} className="border border-gray-200 rounded p-2 flex items-center justify-between">
+                        {editingShiftId === shift.id ? (
+                          <div className="flex-1 grid grid-cols-1 sm:grid-cols-4 gap-2 items-center">
+                            <input type="time" value={editFields.startTime} onChange={e => setEditFields(f => ({ ...f, startTime: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded" />
+                            <input type="time" value={editFields.endTime} onChange={e => setEditFields(f => ({ ...f, endTime: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded" />
+                            <select value={editFields.locationId || ''} onChange={e => setEditFields(f => ({ ...f, locationId: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded">
+                              <option value="">Select location...</option>
+                              {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                            </select>
+                            <select value={editFields.kind} onChange={e => setEditFields(f => ({ ...f, kind: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded">
+                              {shiftKinds.map(k => <option key={k} value={k}>{k}</option>)}
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="flex-1">
+                            <div className="text-sm text-gray-800">{formatTime(shift.startTime)} - {formatTime(shift.endTime)}</div>
+                            <div className="text-xs text-gray-500">{shift.location} {shift.kind !== 'Work' && (<span className="ml-1 inline-block px-1 rounded bg-gray-100 text-gray-600">{shift.kind}</span>)}</div>
+                          </div>
+                        )}
+                        <div className="ml-2 flex items-center space-x-2">
+                          {shift.isPreview && editingShiftId !== shift.id && (
+                            <button onClick={() => beginEditShift(shift)} className="p-1 rounded hover:bg-gray-100" title="Edit">
+                              <PencilSquareIcon className="h-4 w-4 text-gray-600" />
+                            </button>
+                          )}
+                          {editingShiftId === shift.id && (
+                            <>
+                              <button onClick={saveEditShift} className="p-1 rounded hover:bg-gray-100" title="Save">
+                                <CheckIcon className="h-4 w-4 text-green-600" />
+                              </button>
+                              <button onClick={cancelEditShift} className="p-1 rounded hover:bg-gray-100" title="Cancel">
+                                <XMarkIcon className="h-4 w-4 text-gray-600" />
+                              </button>
+                            </>
+                          )}
+                          {shift.isPreview && (
+                            <button onClick={() => removePreviewShift(shift.id)} className="p-1 rounded hover:bg-gray-100" title="Delete">
+                              <TrashIcon className="h-4 w-4 text-red-600" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex items-center space-x-2">
-                  {shift.status === 'draft' && (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                      Draft
-                    </span>
-                  )}
-                  {shift.status === 'confirmed' && (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                      Confirmed
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-            {getFilteredShifts().length === 0 && (
-              <div className="px-4 py-8 text-center text-gray-500">
-                {selectedEmployee ? 'No shifts assigned to this employee this week.' : 'No shifts assigned this week.'}
-              </div>
-            )}
+              );
+            })}
           </div>
-        </div>
+        ); })()}
 
         {/* Schedule Actions */}
         <div className="flex justify-end space-x-3 pt-6">
           <button
             type="button"
-            onClick={saveSchedule}
+            onClick={() => setIsPreviewModalOpen(true)}
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
-            Save Schedule
+            Preview Schedule
           </button>
           <button
             type="button"
@@ -629,6 +773,30 @@ export default function AssignShifts() {
         </div>
       </Card>
 
+      {/* Locations List Section */}
+      <Card title="Locations">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {locations.map(loc => (
+            <div key={loc.id} className="flex items-center justify-between border border-gray-200 rounded-md px-3 py-2">
+              <div>
+                <div className="text-sm font-medium text-gray-800">{loc.name}</div>
+                {(loc.latitude && loc.longitude) ? (
+                  <div className="text-xs text-gray-500">({loc.latitude}, {loc.longitude})</div>
+                ) : (
+                  <div className="text-xs text-gray-400">No coordinates</div>
+                )}
+              </div>
+              <button onClick={() => handleDeleteLocation(loc.id)} className="p-2 rounded hover:bg-gray-100">
+                <TrashIcon className="h-4 w-4 text-red-600" />
+              </button>
+            </div>
+          ))}
+          {locations.length === 0 && (
+            <div className="text-sm text-gray-500">No locations yet.</div>
+          )}
+        </div>
+      </Card>
+
       {/* Location Modal */}
       <LocationModal
         isOpen={isLocationModalOpen}
@@ -636,6 +804,92 @@ export default function AssignShifts() {
         onSave={handleSaveLocation}
         onLocationAdded={handleLocationAdded}
       />
+
+      {/* Preview Schedule Modal */}
+      {isPreviewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setIsPreviewModalOpen(false)}></div>
+          <div className="relative bg-white w-full max-w-4xl mx-4 rounded-md shadow-lg">
+            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900">Preview Schedule</h3>
+              <button onClick={() => setIsPreviewModalOpen(false)} className="p-1 rounded hover:bg-gray-100">
+                <XMarkIcon className="h-5 w-5 text-gray-600" />
+              </button>
+            </div>
+            <div className="p-4 space-y-6">
+              {/* Summary (moved to modal) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                  <div className="text-sm font-medium text-blue-900 mb-1">Live Weekly Summary</div>
+                  <div className="text-2xl font-bold text-blue-900">{formatWorkingHours(getFilteredTotalHours())}</div>
+                  <div className="text-sm text-blue-700">Total working hours this week</div>
+                </div>
+                <div className="bg-green-50 border border-green-100 rounded-lg p-4">
+                  <div className="text-sm font-medium text-green-900 mb-2">Hours by Location</div>
+                  <div className="space-y-1">
+                    {Object.entries(getFilteredHoursByLocation()).map(([loc, hrs]) => (
+                      <div key={loc} className="flex justify-between text-sm">
+                        <span className="text-green-700">{loc}</span>
+                        <span className="font-medium text-green-900">{formatWorkingHours(hrs)}</span>
+                      </div>
+                    ))}
+                    {Object.keys(getFilteredHoursByLocation()).length === 0 && (
+                      <div className="text-sm text-green-700">No locations assigned yet</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="border border-gray-200 rounded-md overflow-hidden">
+                <div className="bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700">Week Overview</div>
+                <div className="divide-y divide-gray-200">
+                  {(() => { const { days, byDate } = getWeekShiftsGrouped(); return (
+                    days.map(({ date, dateObj }) => {
+                      const dayShifts = (byDate[date] || []).slice().sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
+                      return (
+                        <div key={date} className="px-4 py-3">
+                          <div className="text-sm font-medium text-gray-900 mb-1">{dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+                          {dayShifts.length === 0 ? (
+                            <div className="text-xs text-gray-500">No shifts</div>
+                          ) : (
+                            <div className="space-y-1">
+                              {dayShifts.map(s => (
+                                <div key={s.id} className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                                  <div className="text-gray-700">{formatTime(s.startTime)} → {formatTime(s.endTime)}</div>
+                                  <div className="text-gray-600">{s.location}</div>
+                                  <div className="text-gray-500">{s.kind}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ); })()}
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={submitPreviewShifts}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Submit Shift
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPreviewModalOpen(false)}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
