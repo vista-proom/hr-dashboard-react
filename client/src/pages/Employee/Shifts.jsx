@@ -17,6 +17,7 @@ import {
 export default function Shifts() {
   const { user, getCurrentLocation, getDeviceType } = useAuth();
   const [shifts, setShifts] = useState([]);
+  const [loginHistory, setLoginHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [checkingIn, setCheckingIn] = useState(false);
@@ -25,17 +26,21 @@ export default function Shifts() {
   const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
-    loadShifts();
+    loadData();
   }, []);
 
-  const loadShifts = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/employee-shifts/me');
-      setShifts(response.data);
+      const [shiftsRes, loginHistoryRes] = await Promise.all([
+        api.get('/employee-shifts/me'),
+        api.get('/auth/login-history')
+      ]);
+      setShifts(shiftsRes.data);
+      setLoginHistory(loginHistoryRes.data);
     } catch (error) {
-      console.error('Error loading shifts:', error);
-      setError('Failed to load shifts. Please try again.');
+      console.error('Error loading data:', error);
+      setError('Failed to load data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -112,6 +117,21 @@ export default function Shifts() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Shifts');
     XLSX.writeFile(wb, `shifts_${user?.name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const exportLoginHistoryToExcel = () => {
+    const loginHistoryData = loginHistory.map(login => ({
+      'Login Date & Time': new Date(login.login_timestamp).toLocaleString('en-GB'),
+      'Logout Date & Time': login.logout_timestamp ? new Date(login.logout_timestamp).toLocaleString('en-GB') : '—',
+      'Device Info': login.device_info || '—',
+      'IP Address': login.ip_address || '—',
+      'User Agent': login.user_agent || '—'
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(loginHistoryData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Login History');
+    XLSX.writeFile(wb, `login_history_${user?.name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const formatTime12h = (time) => {
@@ -315,38 +335,64 @@ export default function Shifts() {
       <Card 
         title="Login History"
         actions={
-          <div className="flex gap-2">
-            <button
-              onClick={exportToExcel}
-              className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm"
-            >
-              Export to Excel
-            </button>
-          </div>
+          <button
+            onClick={exportLoginHistoryToExcel}
+            className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm"
+          >
+            Export to Excel
+          </button>
         }
       >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Date</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">In Time</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">In Location</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Time</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Location</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Device</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Date & Time of Login</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Device / Browser Info</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">IP Address</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Logout Time</th>
               </tr>
             </thead>
             <tbody>
-              {/* This would be populated with actual check-in/check-out data */}
-              <tr className="border-b border-gray-100">
-                <td className="py-3 px-4 text-gray-500 italic">No login history available</td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-              </tr>
+              {loginHistory.length === 0 ? (
+                <tr className="border-b border-gray-100">
+                  <td colSpan="4" className="py-8 px-4 text-center text-gray-500 italic">
+                    No login history available
+                  </td>
+                </tr>
+              ) : (
+                loginHistory.map((login) => (
+                  <tr key={login.id} className="border-b border-gray-100">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center">
+                        <CalendarIcon className="h-4 w-4 text-gray-400 mr-2" />
+                        {new Date(login.login_timestamp).toLocaleString('en-GB')}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center">
+                        <ComputerDesktopIcon className="h-4 w-4 text-gray-400 mr-2" />
+                        {login.device_info || '—'}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
+                        {login.ip_address || '—'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      {login.logout_timestamp ? (
+                        <div className="flex items-center">
+                          <ClockIcon className="h-4 w-4 text-gray-400 mr-2" />
+                          {new Date(login.logout_timestamp).toLocaleString('en-GB')}
+                        </div>
+                      ) : (
+                        <span className="text-green-600 text-xs font-medium">Active Session</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 function createConnection() {
   return new Database('database.sqlite');
@@ -105,6 +105,18 @@ function createSchema(database) {
       google_maps_url TEXT,
       latitude REAL,
       longitude REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS login_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      login_timestamp TEXT NOT NULL,
+      logout_timestamp TEXT,
+      ip_address TEXT,
+      device_info TEXT,
+      user_agent TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users (id)
     );
   `);
 
@@ -237,6 +249,16 @@ export const db = {
 
   getUserByEmail(email) {
     const row = this.database.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    return row ? mapUserRow(row, this.database) : null;
+  },
+
+  getUserByEmailForAuth(email) {
+    const row = this.database.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    return row;
+  },
+
+  getUserDetails(id) {
+    const row = this.database.prepare('SELECT * FROM users WHERE id = ?').get(id);
     return row ? mapUserRow(row, this.database) : null;
   },
 
@@ -486,7 +508,7 @@ export const db = {
     }
     
     return this.database.prepare(`
-      SELECT s.*, l.name as location_name 
+      SELECT s.*, l.name as location_name, l.latitude, l.longitude
       FROM ${tableName} s 
       LEFT JOIN locations l ON s.location_id = l.id 
       ORDER BY s.date ASC, s.start_time ASC
@@ -668,5 +690,53 @@ export const db = {
       pendingRequests: pendingRequests.count,
       totalEmployees: employees.length
     };
-  }
+  },
+
+  // Get all user stats for Viewer/Manager
+  getAllUserStats() {
+    const users = this.listUsers();
+    return users.map(user => ({
+      ...user,
+      tasks: this.listTasksForUser(user.id),
+      requests: this.listRequestsForUser(user.id)
+    }));
+  },
+
+  // Login History
+  createLoginRecord({ userId, ipAddress, deviceInfo, userAgent }) {
+    const now = new Date().toISOString();
+    const r = this.database.prepare(`
+      INSERT INTO login_history (user_id, login_timestamp, ip_address, device_info, user_agent, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, now, ipAddress || null, deviceInfo || null, userAgent || null, now);
+    
+    return this.database.prepare('SELECT * FROM login_history WHERE id = ?').get(r.lastInsertRowid);
+  },
+
+  updateLogoutRecord(loginRecordId) {
+    const now = new Date().toISOString();
+    this.database.prepare(`
+      UPDATE login_history SET logout_timestamp = ? WHERE id = ?
+    `).run(now, loginRecordId);
+    
+    return this.database.prepare('SELECT * FROM login_history WHERE id = ?').get(loginRecordId);
+  },
+
+  getLoginHistoryForUser(userId, limit = 50) {
+    return this.database.prepare(`
+      SELECT * FROM login_history 
+      WHERE user_id = ? 
+      ORDER BY login_timestamp DESC 
+      LIMIT ?
+    `).all(userId, limit);
+  },
+
+  getCurrentLoginSession(userId) {
+    return this.database.prepare(`
+      SELECT * FROM login_history 
+      WHERE user_id = ? AND logout_timestamp IS NULL 
+      ORDER BY login_timestamp DESC 
+      LIMIT 1
+    `).get(userId);
+  },
 };
