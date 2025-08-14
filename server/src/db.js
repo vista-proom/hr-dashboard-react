@@ -106,6 +106,18 @@ function createSchema(database) {
       latitude REAL,
       longitude REAL
     );
+
+    CREATE TABLE IF NOT EXISTS login_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      login_timestamp TEXT NOT NULL,
+      logout_timestamp TEXT,
+      ip_address TEXT,
+      device_info TEXT,
+      user_agent TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users (id)
+    );
   `);
 
   // Safe migrations
@@ -688,5 +700,43 @@ export const db = {
       tasks: this.listTasksForUser(user.id),
       requests: this.listRequestsForUser(user.id)
     }));
-  }
+  },
+
+  // Login History
+  createLoginRecord({ userId, ipAddress, deviceInfo, userAgent }) {
+    const now = new Date().toISOString();
+    const r = this.database.prepare(`
+      INSERT INTO login_history (user_id, login_timestamp, ip_address, device_info, user_agent, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, now, ipAddress || null, deviceInfo || null, userAgent || null, now);
+    
+    return this.database.prepare('SELECT * FROM login_history WHERE id = ?').get(r.lastInsertRowid);
+  },
+
+  updateLogoutRecord(loginRecordId) {
+    const now = new Date().toISOString();
+    this.database.prepare(`
+      UPDATE login_history SET logout_timestamp = ? WHERE id = ?
+    `).run(now, loginRecordId);
+    
+    return this.database.prepare('SELECT * FROM login_history WHERE id = ?').get(loginRecordId);
+  },
+
+  getLoginHistoryForUser(userId, limit = 50) {
+    return this.database.prepare(`
+      SELECT * FROM login_history 
+      WHERE user_id = ? 
+      ORDER BY login_timestamp DESC 
+      LIMIT ?
+    `).all(userId, limit);
+  },
+
+  getCurrentLoginSession(userId) {
+    return this.database.prepare(`
+      SELECT * FROM login_history 
+      WHERE user_id = ? AND logout_timestamp IS NULL 
+      ORDER BY login_timestamp DESC 
+      LIMIT 1
+    `).get(userId);
+  },
 };

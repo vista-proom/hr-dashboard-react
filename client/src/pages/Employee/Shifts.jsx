@@ -11,131 +11,59 @@ import {
   ComputerDesktopIcon,
   CalendarIcon,
   CheckIcon,
-  XMarkIcon,
-  ExclamationTriangleIcon
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 
 export default function Shifts() {
   const { user, getCurrentLocation, getDeviceType } = useAuth();
   const [shifts, setShifts] = useState([]);
+  const [loginHistory, setLoginHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [checkingIn, setCheckingIn] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-  const [locationError, setLocationError] = useState('');
 
   useEffect(() => {
-    loadShifts();
+    loadData();
   }, []);
 
-  const loadShifts = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/employee-shifts/me');
-      setShifts(response.data);
+      const [shiftsRes, loginHistoryRes] = await Promise.all([
+        api.get('/employee-shifts/me'),
+        api.get('/auth/login-history')
+      ]);
+      setShifts(shiftsRes.data);
+      setLoginHistory(loginHistoryRes.data);
     } catch (error) {
-      console.error('Error loading shifts:', error);
-      setError('Failed to load shifts. Please try again.');
+      console.error('Error loading data:', error);
+      setError('Failed to load data. Please try again.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Calculate distance between two coordinates using Haversine formula
-  const calculateDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; // Earth's radius in kilometers
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c; // Distance in kilometers
-  };
-
-  // Check if employee is within allowed range of their assigned shift location
-  const validateLocationForShift = async (currentLat, currentLon) => {
-    try {
-      // Get today's shifts to check location
-      const today = new Date().toISOString().slice(0, 10);
-      const todayShifts = shifts.filter(shift => shift.date === today);
-      
-      if (todayShifts.length === 0) {
-        return { valid: false, message: 'No shift scheduled for today.' };
-      }
-
-      // Check if any of today's shifts have a location that matches current position
-      for (const shift of todayShifts) {
-        if (shift.location_name && shift.latitude && shift.longitude) {
-          const distance = calculateDistance(
-            currentLat, 
-            currentLon, 
-            shift.latitude, 
-            shift.longitude
-          );
-          
-          // Convert to meters (100 meters = 0.1 km)
-          const distanceInMeters = distance * 1000;
-          
-          if (distanceInMeters <= 100) {
-            return { 
-              valid: true, 
-              locationName: shift.location_name,
-              message: `Check-in successful at ${shift.location_name}`
-            };
-          }
-        }
-      }
-
-      return { 
-        valid: false, 
-        message: 'You are not within the allowed check-in range for this location. Please move closer to your assigned work location.'
-      };
-    } catch (error) {
-      console.error('Error validating location:', error);
-      return { valid: false, message: 'Error validating location. Please try again.' };
     }
   };
 
   const checkIn = async () => {
     try {
       setCheckingIn(true);
-      setLocationError('');
-      setError('');
-      
       const location = await getCurrentLocation();
-      if (!location) {
-        setError('Unable to get your current location. Please enable location services and try again.');
-        return;
-      }
-
-      // Validate location against assigned shift
-      const locationValidation = await validateLocationForShift(location.latitude, location.longitude);
-      
-      if (!locationValidation.valid) {
-        setLocationError(locationValidation.message);
-        return;
-      }
-
       const deviceType = getDeviceType();
       
       const checkInData = {
         timestamp: new Date().toISOString(),
-        latitude: location.latitude,
-        longitude: location.longitude,
-        locationName: locationValidation.locationName,
+        latitude: location?.latitude || null,
+        longitude: location?.longitude || null,
+        locationName: location?.name || null,
         deviceType: deviceType
       };
 
       await api.post('/shifts/check-in', checkInData);
       
-      setSuccessMessage(`Check-In Successfully at ${locationValidation.locationName}`);
+      setSuccessMessage('Check-In Successfully');
       setShowSuccessPopup(true);
-      
-      // Reload shifts to show updated status
-      await loadShifts();
       
       // Hide success message after 6 seconds
       setTimeout(() => setShowSuccessPopup(false), 6000);
@@ -151,39 +79,19 @@ export default function Shifts() {
   const checkOut = async () => {
     try {
       setCheckingOut(true);
-      setLocationError('');
-      setError('');
-      
       const location = await getCurrentLocation();
-      if (!location) {
-        setError('Unable to get your current location. Please enable location services and try again.');
-        return;
-      }
-
-      // For check-out, we'll be more lenient with location validation
-      // but still check if they're reasonably close to any work location
-      const today = new Date().toISOString().slice(0, 10);
-      const todayShifts = shifts.filter(shift => shift.date === today);
-      
-      let locationName = 'Unknown Location';
-      if (todayShifts.length > 0 && todayShifts[0].location_name) {
-        locationName = todayShifts[0].location_name;
-      }
       
       const checkOutData = {
         timestamp: new Date().toISOString(),
-        latitude: location.latitude,
-        longitude: location.longitude,
-        locationName: locationName
+        latitude: location?.latitude || null,
+        longitude: location?.longitude || null,
+        locationName: location?.name || null
       };
 
       await api.post('/shifts/check-out', checkOutData);
       
-      setSuccessMessage(`Check-Out Successfully from ${locationName}`);
+      setSuccessMessage('Check-Out Successfully');
       setShowSuccessPopup(true);
-      
-      // Reload shifts to show updated status
-      await loadShifts();
       
       // Hide success message after 6 seconds
       setTimeout(() => setShowSuccessPopup(false), 6000);
@@ -209,6 +117,21 @@ export default function Shifts() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Shifts');
     XLSX.writeFile(wb, `shifts_${user?.name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const exportLoginHistoryToExcel = () => {
+    const loginHistoryData = loginHistory.map(login => ({
+      'Login Date & Time': new Date(login.login_timestamp).toLocaleString('en-GB'),
+      'Logout Date & Time': login.logout_timestamp ? new Date(login.logout_timestamp).toLocaleString('en-GB') : '—',
+      'Device Info': login.device_info || '—',
+      'IP Address': login.ip_address || '—',
+      'User Agent': login.user_agent || '—'
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(loginHistoryData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Login History');
+    XLSX.writeFile(wb, `login_history_${user?.name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   const formatTime12h = (time) => {
@@ -290,18 +213,6 @@ export default function Shifts() {
         </div>
       )}
 
-      {/* Location Error Message */}
-      {locationError && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
-          <div className="flex">
-            <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-yellow-800">{locationError}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Shift Actions */}
       <Card title="Shift Actions">
         <div className="space-y-4">
@@ -325,7 +236,6 @@ export default function Shifts() {
           <div className="text-sm text-gray-600 space-y-1">
             <p>• Automatically captures your current date, time, and location</p>
             <p>• Uses high-accuracy GPS positioning</p>
-            <p>• Check-in only allowed within 100 meters of your assigned work location</p>
           </div>
 
           {/* Today's Shift Snippet */}
@@ -342,11 +252,6 @@ export default function Shifts() {
                     <MapPinIcon className="h-4 w-4 inline mr-1" />
                     {shift.location_name || 'Location not specified'}
                   </p>
-                  {shift.latitude && shift.longitude && (
-                    <p className="text-xs text-blue-600">
-                      GPS: {shift.latitude.toFixed(6)}, {shift.longitude.toFixed(6)}
-                    </p>
-                  )}
                 </div>
               ))}
             </div>
@@ -430,38 +335,64 @@ export default function Shifts() {
       <Card 
         title="Login History"
         actions={
-          <div className="flex gap-2">
-            <button
-              onClick={exportToExcel}
-              className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm"
-            >
-              Export to Excel
-            </button>
-          </div>
+          <button
+            onClick={exportLoginHistoryToExcel}
+            className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm"
+          >
+            Export to Excel
+          </button>
         }
       >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Date</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">In Time</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">In Location</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Time</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Location</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Device</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Date & Time of Login</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Device / Browser Info</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">IP Address</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Logout Time</th>
               </tr>
             </thead>
             <tbody>
-              {/* This would be populated with actual check-in/check-out data */}
-              <tr className="border-b border-gray-100">
-                <td className="py-3 px-4 text-gray-500 italic">No login history available</td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-                <td className="py-3 px-4"></td>
-              </tr>
+              {loginHistory.length === 0 ? (
+                <tr className="border-b border-gray-100">
+                  <td colSpan="4" className="py-8 px-4 text-center text-gray-500 italic">
+                    No login history available
+                  </td>
+                </tr>
+              ) : (
+                loginHistory.map((login) => (
+                  <tr key={login.id} className="border-b border-gray-100">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center">
+                        <CalendarIcon className="h-4 w-4 text-gray-400 mr-2" />
+                        {new Date(login.login_timestamp).toLocaleString('en-GB')}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center">
+                        <ComputerDesktopIcon className="h-4 w-4 text-gray-400 mr-2" />
+                        {login.device_info || '—'}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
+                        {login.ip_address || '—'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      {login.logout_timestamp ? (
+                        <div className="flex items-center">
+                          <ClockIcon className="h-4 w-4 text-gray-400 mr-2" />
+                          {new Date(login.logout_timestamp).toLocaleString('en-GB')}
+                        </div>
+                      ) : (
+                        <span className="text-green-600 text-xs font-medium">Active Session</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

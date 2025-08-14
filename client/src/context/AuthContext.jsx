@@ -27,9 +27,19 @@ export function AuthProvider({ children }) {
     return resp.data.user;
   };
 
-  const logout = () => {
-    setToken(null);
-    setUser(null);
+  const logout = async () => {
+    try {
+      // Call backend logout endpoint to record logout time
+      if (token) {
+        await api.post('/auth/logout');
+      }
+    } catch (error) {
+      console.error('Error during logout:', error);
+      // Continue with logout even if backend call fails
+    } finally {
+      setToken(null);
+      setUser(null);
+    }
   };
 
   const getCurrentLocation = () => new Promise((resolve) => {
