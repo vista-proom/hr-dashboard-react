@@ -17,7 +17,7 @@ import shiftsRouter from './src/routes/shifts.js';
 import requestsRouter from './src/routes/requests.js';
 import notificationsRouter from './src/routes/notifications.js';
 import locationsRouter from './src/routes/locations.js';
-import schedulesRouter from './src/routes/schedules.js';
+import employeeShiftsRouter from './src/routes/employeeShifts.js';
 import { authenticateJWT } from './src/middleware/auth.js';
 
 dotenv.config();
@@ -62,7 +62,7 @@ app.use('/api/shifts', shiftsRouter);
 app.use('/api/requests', requestsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/locations', locationsRouter);
-app.use('/api/schedules', schedulesRouter);
+app.use('/api/employee-shifts', employeeShiftsRouter);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
