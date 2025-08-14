@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -28,6 +28,14 @@ export default function Shifts() {
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
 
+  // New: check-in/out sessions
+  const [sessions, setSessions] = useState([]);
+
+  // New: sorting/filtering for My Live Schedule
+  const [scheduleQuery, setScheduleQuery] = useState('');
+  const [sortKey, setSortKey] = useState('date');
+  const [sortDir, setSortDir] = useState('asc');
+
   useEffect(() => {
     loadData();
   }, []);
@@ -35,14 +43,16 @@ export default function Shifts() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [shiftsRes, loginHistoryRes, locationsRes] = await Promise.all([
+      const [assignedRes, loginHistoryRes, locationsRes, sessionsRes] = await Promise.all([
         api.get('/employee-shifts/me'),
         api.get('/auth/login-history'),
-        api.get('/locations')
+        api.get('/locations'),
+        api.get('/shifts')
       ]);
-      setShifts(shiftsRes.data);
+      setShifts(assignedRes.data);
       setLoginHistory(loginHistoryRes.data);
       setLocations(locationsRes.data || []);
+      setSessions(sessionsRes.data || []);
     } catch (error) {
       console.error('Error loading data:', error);
       setError('Failed to load data. Please try again.');
@@ -66,12 +76,11 @@ export default function Shifts() {
       };
 
       await api.post('/shifts/check-in', checkInData);
-      
       setSuccessMessage('Check-In Successfully');
       setShowSuccessPopup(true);
-      
-      // Hide success message after 6 seconds
       setTimeout(() => setShowSuccessPopup(false), 6000);
+      // Refresh live data
+      await loadData();
       
     } catch (error) {
       console.error('Error checking in:', error);
@@ -94,12 +103,11 @@ export default function Shifts() {
       };
 
       await api.post('/shifts/check-out', checkOutData);
-      
       setSuccessMessage('Check-Out Successfully');
       setShowSuccessPopup(true);
-      
-      // Hide success message after 6 seconds
       setTimeout(() => setShowSuccessPopup(false), 6000);
+      // Refresh live data
+      await loadData();
       
     } catch (error) {
       console.error('Error checking out:', error);
@@ -109,9 +117,28 @@ export default function Shifts() {
     }
   };
 
+  // Week number helper (Saturday-based)
+  const weekNumberFromISO = (iso) => {
+    const [y,m,d] = iso.split('-').map(Number);
+    const date = new Date(Date.UTC(y, m-1, d));
+    const startOfYear = new Date(Date.UTC(date.getUTCFullYear(),0,1));
+    // move to Saturday of that week
+    const day = date.getUTCDay();
+    const saturday = new Date(date); saturday.setUTCDate(date.getUTCDate() - ((day + 1) % 7));
+    const satYear0 = new Date(startOfYear); satYear0.setUTCDate(startOfYear.getUTCDate() - ((startOfYear.getUTCDay()+1)%7));
+    const diffDays = Math.floor((saturday - satYear0) / (1000*60*60*24));
+    return Math.floor(diffDays/7) + 1;
+  };
+
   const exportScheduleToPDF = () => {
+    if (!shifts || shifts.length === 0) {
+      alert('No schedule data available to export.');
+      return;
+    }
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    const title = `My Live Schedule - ${user?.name || ''}`;
+    const todayIso = new Date().toISOString().slice(0,10);
+    const week = weekNumberFromISO(todayIso);
+    const title = `My Live Schedule - ${user?.name || ''} (Week ${week})`;
     doc.setFontSize(14);
     doc.text(title, 40, 40);
 
@@ -132,7 +159,7 @@ export default function Shifts() {
       columnStyles: { 0: { cellWidth: 120 }, 1: { cellWidth: 120 }, 2: { cellWidth: 120 }, 3: { cellWidth: 'auto' } }
     });
 
-    doc.save(`my_live_schedule_${new Date().toISOString().slice(0,10)}.pdf`);
+    doc.save(`shifts_${(user?.name || 'me').replace(/\s+/g,'_')}_${week}.pdf`);
   };
 
   const exportLoginHistoryToExcel = () => {
@@ -184,15 +211,11 @@ export default function Shifts() {
 
   const nearestSavedLocation = (lat, lng) => {
     if (lat == null || lng == null) return null;
-    let nearest = null;
-    let minKm = Infinity;
+    let nearest = null; let minKm = Infinity;
     locations.forEach(loc => {
       if (loc.latitude != null && loc.longitude != null) {
         const d = distanceInKm(lat, lng, loc.latitude, loc.longitude);
-        if (d < minKm) {
-          minKm = d;
-          nearest = { ...loc, distanceKm: d };
-        }
+        if (d < minKm) { minKm = d; nearest = { ...loc, distanceKm: d }; }
       }
     });
     if (nearest && nearest.distanceKm <= 0.1) return nearest; // within 100m
@@ -207,6 +230,60 @@ export default function Shifts() {
   };
 
   const todayShifts = getTodayShifts();
+
+  // Determine open session (for disabling buttons)
+  const openSession = useMemo(() => (sessions || []).find(s => !s.check_out_time), [sessions]);
+  const lastSession = useMemo(() => (sessions || [])[0] || null, [sessions]);
+
+  // Derived schedule grid with filtering and sorting
+  const filteredSortedShifts = useMemo(() => {
+    const q = scheduleQuery.trim().toLowerCase();
+    const data = (shifts || []).filter(s => (
+      !q || new Date(s.date).toLocaleDateString('en-GB').toLowerCase().includes(q) ||
+      (s.location_name || '').toLowerCase().includes(q)
+    ));
+    const compare = (a, b) => {
+      let av, bv;
+      switch (sortKey) {
+        case 'date': av = a.date; bv = b.date; break;
+        case 'start_time': av = a.start_time; bv = b.start_time; break;
+        case 'end_time': av = a.end_time; bv = b.end_time; break;
+        case 'location_name': av = a.location_name || ''; bv = b.location_name || ''; break;
+        case 'status': {
+          const sa = scheduleStatus(a); const sb = scheduleStatus(b); av = sa; bv = sb; break;
+        }
+        default: av = a.date; bv = b.date;
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    };
+    return data.slice().sort(compare);
+  }, [shifts, scheduleQuery, sortKey, sortDir]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const scheduleStatus = (s) => {
+    // Determine Upcoming / Ongoing / Completed based on current time
+    const now = new Date();
+    const start = new Date(`${s.date}T${s.start_time}`);
+    const end = new Date(`${s.date}T${s.end_time}`);
+    if (now < start) return 'Upcoming';
+    if (now >= start && now <= end) return 'Ongoing';
+    return 'Completed';
+  };
+
+  // Total hours for today
+  const todayTotalHours = useMemo(() => {
+    return todayShifts.reduce((sum, s) => {
+      const start = new Date(`${s.date}T${s.start_time}`);
+      const end = new Date(`${s.date}T${s.end_time}`);
+      return sum + Math.max(0, (end - start) / (1000*60*60));
+    }, 0);
+  }, [todayShifts]);
 
   if (loading) {
     return (
@@ -228,22 +305,15 @@ export default function Shifts() {
           <div className="flex items-center">
             <CheckIcon className="h-5 w-5 text-green-400 mr-2" />
             <p className="text-sm font-medium text-green-800">{successMessage}</p>
-            <button
-              onClick={() => setShowSuccessPopup(false)}
-              className="ml-4 text-green-400 hover:text-green-600"
-            >
+            <button onClick={() => setShowSuccessPopup(false)} className="ml-4 text-green-400 hover:text-green-600">
               <XMarkIcon className="h-4 w-4" />
             </button>
           </div>
-          {/* Progress bar */}
           <div className="mt-2 w-full bg-green-200 rounded-full h-1">
             <div className="bg-green-500 h-1 rounded-full animate-[shrink_6s_linear_forwards]"></div>
           </div>
           <style>{`
-            @keyframes shrink {
-              from { width: 100%; }
-              to { width: 0%; }
-            }
+            @keyframes shrink { from { width: 100%; } to { width: 0%; } }
           `}</style>
         </div>
       )}
@@ -262,111 +332,116 @@ export default function Shifts() {
       {/* Shift Actions */}
       <Card title="Shift Actions">
         <div className="space-y-4">
-          <div className="flex gap-4">
+          <div className="flex gap-4 items-center">
             <button
               onClick={checkIn}
-              disabled={checkingIn}
-              className="flex-1 bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed transition-colors"
+              disabled={checkingIn || !!openSession}
+              title={openSession ? 'You are already checked in' : ''}
+              className="px-4 py-2 rounded-md bg-green-600 text-white hover:bg-green-700 disabled:bg-green-400 disabled:cursor-not-allowed"
             >
               {checkingIn ? 'Checking In...' : 'Check-In'}
             </button>
             <button
               onClick={checkOut}
-              disabled={checkingOut}
-              className="flex-1 bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed transition-colors"
+              disabled={checkingOut || !openSession}
+              title={!openSession ? 'No open session to check out' : ''}
+              className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed"
             >
               {checkingOut ? 'Checking Out...' : 'Check-Out'}
             </button>
+            {openSession && (
+              <span className="ml-2 inline-flex items-center text-green-700 text-xs">
+                <span className="h-2 w-2 rounded-full bg-green-500 mr-1"></span> Active session
+              </span>
+            )}
           </div>
-          
-          <div className="text-sm text-gray-600 space-y-1">
-            <p>• Automatically captures your current date, time, and location</p>
-            <p>• Uses high-accuracy GPS positioning</p>
-          </div>
-
-          {/* Today's Shift Snippet */}
-          {todayShifts.length > 0 ? (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-medium text-blue-800 mb-2">Today's Shift</h4>
-              {todayShifts.map((shift, index) => (
-                <div key={shift.id} className="text-sm text-blue-700">
-                  <p>
-                    <ClockIcon className="h-4 w-4 inline mr-1" />
-                    {formatTime12h(shift.start_time)} - {formatTime12h(shift.end_time)}
-                  </p>
-                  <p>
-                    <MapPinIcon className="h-4 w-4 inline mr-1" />
-                    {shift.location_name || 'Location not specified'}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <p className="text-sm text-gray-600 italic">No shift scheduled for today</p>
+          {lastSession && (
+            <div className="text-xs text-gray-600">
+              <div>Last Check-In: {lastSession.check_in_time ? new Date(lastSession.check_in_time).toLocaleString('en-GB') : '—'}</div>
+              <div>Last Check-Out: {lastSession.check_out_time ? new Date(lastSession.check_out_time).toLocaleString('en-GB') : '—'}</div>
             </div>
           )}
+
+          {/* Today's Shift Snippet */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-medium text-blue-800">Today's Shift</h4>
+              <span className="text-xs text-blue-800">Total: {todayTotalHours.toFixed(1)}h</span>
+            </div>
+            {todayShifts.length > 0 ? (
+              <div className="grid gap-2">
+                {todayShifts.map((shift) => {
+                  const status = scheduleStatus(shift);
+                  const badge = status === 'Ongoing' ? 'bg-green-100 text-green-800' : status === 'Upcoming' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700';
+                  return (
+                    <div key={shift.id} className="rounded-md bg-white border border-blue-100 p-3 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm"><span className="mr-1">🕒</span>{formatTime12h(shift.start_time)} - {formatTime12h(shift.end_time)}</div>
+                        <div className="text-xs text-gray-600"><span className="mr-1">📍</span>{shift.location_name || 'Location not specified'}</div>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded ${badge}`}>{status}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600 italic">No shift scheduled for today</p>
+            )}
+          </div>
         </div>
       </Card>
 
       {/* My Live Schedule */}
-      <Card 
-        title="My Live Schedule" 
-        actions={
-          <button
-            onClick={exportScheduleToPDF}
-            className="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm"
-          >
-            Export to PDF
-          </button>
-        }
-      >
-        {shifts.length === 0 ? (
+      <Card title="My Live Schedule" actions={
+        <div className="flex items-center gap-2">
+          <button onClick={exportScheduleToPDF} className="border border-blue-600 text-blue-600 px-2 py-1 rounded text-xs hover:bg-blue-50">Export to PDF</button>
+        </div>
+      }>
+        <div className="mb-2 flex items-center gap-2">
+          <input value={scheduleQuery} onChange={(e)=>setScheduleQuery(e.target.value)} placeholder="Filter by date or location..." className="w-full px-3 py-2 border border-gray-300 rounded-md" />
+        </div>
+        {filteredSortedShifts.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-sm text-gray-500">No confirmed schedules this week</p>
+            <p className="text-sm text-gray-500">No confirmed schedules</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 font-medium text-gray-700">Date</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-700">Start Time</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-700">End Time</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-700">Location</th>
+                  <th className="text-left py-3 px-4 font-medium text-gray-700 cursor-pointer" onClick={()=>toggleSort('date')}>Date</th>
+                  <th className="text-left py-3 px-4 font-medium text-gray-700 cursor-pointer" onClick={()=>toggleSort('start_time')}>Start Time</th>
+                  <th className="text-left py-3 px-4 font-medium text-gray-700 cursor-pointer" onClick={()=>toggleSort('end_time')}>End Time</th>
+                  <th className="text-left py-3 px-4 font-medium text-gray-700 cursor-pointer" onClick={()=>toggleSort('location_name')}>Location</th>
+                  <th className="text-left py-3 px-4 font-medium text-gray-700 cursor-pointer" onClick={()=>toggleSort('status')}>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {shifts.map((shift, index) => {
+                {filteredSortedShifts.map((shift) => {
                   const isToday = shift.date === new Date().toISOString().slice(0, 10);
+                  const status = scheduleStatus(shift);
                   return (
-                    <tr 
-                      key={shift.id} 
-                      className={`border-b border-gray-100 ${isToday ? 'bg-blue-50' : ''}`}
-                    >
+                    <tr key={shift.id} className={`border-b border-gray-100 ${isToday ? 'bg-blue-50' : ''}`}>
                       <td className="py-3 px-4">
                         <div className="flex items-center">
                           <CalendarIcon className="h-4 w-4 text-gray-400 mr-2" />
                           {new Date(shift.date).toLocaleDateString('en-GB')}
                         </div>
                       </td>
+                      <td className="py-3 px-4"><div className="flex items-center"><ClockIcon className="h-4 w-4 text-gray-400 mr-2" />{formatTime12h(shift.start_time)}</div></td>
+                      <td className="py-3 px-4"><div className="flex items-center"><ClockIcon className="h-4 w-4 text-gray-400 mr-2" />{formatTime12h(shift.end_time)}</div></td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center">
-                          <ClockIcon className="h-4 w-4 text-gray-400 mr-2" />
-                          {formatTime12h(shift.start_time)}
+                        <div className="flex items-center gap-1">
+                          <MapPinIcon className="h-4 w-4 text-gray-400" />
+                          {shift.latitude != null && shift.longitude != null ? (
+                            <a href={googleMapsLink(shift.latitude, shift.longitude)} className="text-blue-600 hover:underline" target="_blank" rel="noreferrer">{shift.location_name || '—'}</a>
+                          ) : (
+                            <span>{shift.location_name || '—'}</span>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center">
-                          <ClockIcon className="h-4 w-4 text-gray-400 mr-2" />
-                          {formatTime12h(shift.end_time)}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center">
-                          <MapPinIcon className="h-4 w-4 text-gray-400 mr-2" />
-                          {shift.location_name || '—'}
-                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded ${status==='Ongoing'?'bg-green-100 text-green-800':status==='Upcoming'?'bg-blue-100 text-blue-800':'bg-gray-100 text-gray-700'}`}>{status}</span>
                       </td>
                     </tr>
                   );
@@ -378,104 +453,74 @@ export default function Shifts() {
       </Card>
 
       {/* Login History */}
-      <Card 
-        title="Login History"
-        actions={
-          <button
-            onClick={exportLoginHistoryToExcel}
-            className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm"
-          >
-            Export to Excel
-          </button>
-        }
-      >
+      <Card title="Login History" actions={
+        <button onClick={exportLoginHistoryToExcel} className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm">Export to Excel</button>
+      }>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Date & Time of Login</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Device / Browser Info</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">IP Address</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Logout Time</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Date</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">In Time</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-700">In Location</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Time</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-700">Out Location</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Device</th>
               </tr>
             </thead>
             <tbody>
               {loginHistory.length === 0 ? (
                 <tr className="border-b border-gray-100">
-                  <td colSpan="6" className="py-8 px-4 text-center text-gray-500 italic">
-                    No login history available
-                  </td>
+                  <td colSpan="6" className="py-8 px-4 text-center text-gray-500 italic">No login history available</td>
                 </tr>
               ) : (
                 loginHistory.map((login) => {
-                  // try to find a shift on the same date for in/out coordinates
                   const loginDateISO = new Date(login.login_timestamp).toISOString().slice(0,10);
-                  const relatedShift = shifts.find(s => s.check_in_date === loginDateISO || s.check_out_date === loginDateISO);
+                  const relatedShift = sessions.find(s => s.check_in_date === loginDateISO || s.check_out_date === loginDateISO) || {};
                   const inLat = relatedShift?.check_in_lat ?? null;
                   const inLng = relatedShift?.check_in_lng ?? null;
                   const outLat = relatedShift?.check_out_lat ?? null;
                   const outLng = relatedShift?.check_out_lng ?? null;
                   const nearIn = nearestSavedLocation(inLat, inLng);
                   const nearOut = nearestSavedLocation(outLat, outLng);
+                  const active = !login.logout_timestamp;
                   return (
-                  <tr key={login.id} className="border-b border-gray-100">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center">
-                        <CalendarIcon className="h-4 w-4 text-gray-400 mr-2" />
-                        {new Date(login.login_timestamp).toLocaleString('en-GB')}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center">
-                        <ComputerDesktopIcon className="h-4 w-4 text-gray-400 mr-2" />
-                        {login.device_info || '—'}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
-                        {login.ip_address || '—'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      {login.logout_timestamp ? (
-                        <div className="flex items-center">
-                          <ClockIcon className="h-4 w-4 text-gray-400 mr-2" />
-                          {new Date(login.logout_timestamp).toLocaleString('en-GB')}
+                    <tr key={login.id} className="border-b border-gray-100">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <CalendarIcon className="h-4 w-4 text-gray-400" />
+                          {new Date(login.login_timestamp).toLocaleDateString('en-GB')}
+                          {active && <span className="inline-block h-2 w-2 rounded-full bg-green-500" title="Active session" />}
                         </div>
-                      ) : (
-                        <span className="text-green-600 text-xs font-medium">Active Session</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      {inLat != null && inLng != null ? (
-                        nearIn ? (
-                          <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearIn.latitude},${nearIn.longitude}`} target="_blank" rel="noreferrer">
-                            {nearIn.name}
-                          </a>
+                      </td>
+                      <td className="py-3 px-4">{new Date(login.login_timestamp).toLocaleTimeString('en-GB')}</td>
+                      <td className="py-3 px-4">
+                        {inLat != null && inLng != null ? (
+                          nearIn ? (
+                            <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearIn.latitude},${nearIn.longitude}`} target="_blank" rel="noreferrer">{nearIn.name}</a>
+                          ) : (
+                            <a className="text-blue-600 hover:underline" href={googleMapsLink(inLat, inLng)} target="_blank" rel="noreferrer">In Location</a>
+                          )
                         ) : (
-                          <a className="text-blue-600 hover:underline" href={googleMapsLink(inLat, inLng)} target="_blank" rel="noreferrer">In Location</a>
-                        )
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      {outLat != null && outLng != null ? (
-                        nearOut ? (
-                          <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearOut.latitude},${nearOut.longitude}`} target="_blank" rel="noreferrer">
-                            {nearOut.name}
-                          </a>
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">{login.logout_timestamp ? new Date(login.logout_timestamp).toLocaleTimeString('en-GB') : '—'}</td>
+                      <td className="py-3 px-4">
+                        {outLat != null && outLng != null ? (
+                          nearOut ? (
+                            <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearOut.latitude},${nearOut.longitude}`} target="_blank" rel="noreferrer">{nearOut.name}</a>
+                          ) : (
+                            <a className="text-blue-600 hover:underline" href={googleMapsLink(outLat, outLng)} target="_blank" rel="noreferrer">Out Location</a>
+                          )
                         ) : (
-                          <a className="text-blue-600 hover:underline" href={googleMapsLink(outLat, outLng)} target="_blank" rel="noreferrer">Out Location</a>
-                        )
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ); })
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">{getDeviceIcon('desktop')}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
