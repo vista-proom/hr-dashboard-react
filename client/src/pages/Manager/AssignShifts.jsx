@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../api';
 import Card from '../../components/Card';
+import LocationModal from '../../components/LocationModal';
 import { useAuth } from '../../context/AuthContext';
 import { 
   UserIcon, 
@@ -23,7 +24,7 @@ export default function AssignShifts() {
   // Form state
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
-  const [workingHours, setWorkingHours] = useState(8);
+  const [workingHours, setWorkingHours] = useState(0);
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [selectedLocation, setSelectedLocation] = useState('');
@@ -38,11 +39,43 @@ export default function AssignShifts() {
   const [totalWorkingHours, setTotalWorkingHours] = useState(0);
   const [hoursByLocation, setHoursByLocation] = useState({});
 
+  // Location modal state
+  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
+
+  // Draft shift state for real-time preview
+  const [draftShift, setDraftShift] = useState(null);
+
   const shiftKinds = ['Work', 'DayOff', 'Sick', 'Vacation', 'Training'];
 
   useEffect(() => {
     loadData();
   }, []);
+
+  // Auto-calculate working hours when start/end times change
+  useEffect(() => {
+    calculateWorkingHours();
+  }, [startTime, endTime]);
+
+  // Update draft shift when form changes
+  useEffect(() => {
+    if (selectedEmployee && selectedDate && startTime && endTime && selectedLocation) {
+      const employee = employees.find(e => e.id === Number(selectedEmployee));
+      const location = locations.find(l => l.id === Number(selectedLocation));
+      
+      setDraftShift({
+        id: 'draft',
+        date: selectedDate,
+        employee: employee?.name || '',
+        startTime: startTime,
+        endTime: endTime,
+        location: location?.name || '',
+        kind: selectedKind,
+        status: 'draft'
+      });
+    } else {
+      setDraftShift(null);
+    }
+  }, [selectedEmployee, selectedDate, startTime, endTime, selectedLocation, selectedKind, employees, locations]);
 
   const loadData = async () => {
     try {
@@ -96,9 +129,16 @@ export default function AssignShifts() {
     }
   };
 
-  useEffect(() => {
-    calculateWorkingHours();
-  }, [startTime, endTime]);
+  const formatWorkingHours = (hours) => {
+    const wholeHours = Math.floor(hours);
+    const minutes = Math.round((hours - wholeHours) * 60);
+    
+    if (minutes === 0) {
+      return `${wholeHours}h`;
+    } else {
+      return `${wholeHours}h ${minutes}m`;
+    }
+  };
 
   const validateForm = () => {
     if (!selectedEmployee || !selectedDate || !startTime || !endTime || !selectedLocation) {
@@ -155,7 +195,8 @@ export default function AssignShifts() {
       setEndTime('');
       setSelectedLocation('');
       setSelectedKind('Work');
-      setWorkingHours(8);
+      setWorkingHours(0);
+      setDraftShift(null);
 
       // Reload current week schedule
       loadCurrentWeekSchedule();
@@ -176,7 +217,8 @@ export default function AssignShifts() {
     setEndTime('');
     setSelectedLocation('');
     setSelectedKind('Work');
-    setWorkingHours(8);
+    setWorkingHours(0);
+    setDraftShift(null);
     setError('');
   };
 
@@ -195,6 +237,30 @@ export default function AssignShifts() {
     setTimeout(() => setShowSuccess(false), 5000);
   };
 
+  const handleSaveLocation = async (locationData) => {
+    try {
+      // Call the backend API to save the location
+      const response = await api.post('/locations', locationData);
+      
+      // Add the new location to the local state
+      setLocations(prev => [...prev, response.data]);
+      
+      // Show success message
+      setSuccessMessage('Location saved successfully!');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 5000);
+      
+    } catch (error) {
+      console.error('Error saving location:', error);
+      throw new Error('Failed to save location');
+    }
+  };
+
+  const handleLocationAdded = () => {
+    // Refresh locations if needed
+    loadData();
+  };
+
   const formatTime = (time) => {
     if (!time) return '';
     const [hours, minutes] = time.split(':');
@@ -207,6 +273,65 @@ export default function AssignShifts() {
   const getDayName = (dateString) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { weekday: 'short' });
+  };
+
+  // Filter shifts for selected employee
+  const getFilteredShifts = () => {
+    if (!selectedEmployee) {
+      return currentWeekShifts;
+    }
+    
+    const employee = employees.find(e => e.id === Number(selectedEmployee));
+    if (!employee) return currentWeekShifts;
+    
+    // Filter existing shifts for the selected employee
+    const employeeShifts = currentWeekShifts.filter(shift => 
+      shift.employee === employee.name
+    );
+    
+    // Add draft shift if it exists and matches the selected employee
+    if (draftShift && draftShift.employee === employee.name) {
+      return [...employeeShifts, draftShift];
+    }
+    
+    return employeeShifts;
+  };
+
+  // Calculate total hours for filtered shifts
+  const getFilteredTotalHours = () => {
+    const filteredShifts = getFilteredShifts();
+    let total = 0;
+    
+    filteredShifts.forEach(shift => {
+      if (shift.startTime && shift.endTime) {
+        const start = new Date(`2000-01-01T${shift.startTime}`);
+        const end = new Date(`2000-01-01T${shift.endTime}`);
+        const diffMs = end - start;
+        const diffHours = diffMs / (1000 * 60 * 60);
+        total += diffHours;
+      }
+    });
+    
+    return total;
+  };
+
+  // Calculate hours by location for filtered shifts
+  const getFilteredHoursByLocation = () => {
+    const filteredShifts = getFilteredShifts();
+    const locationHours = {};
+    
+    filteredShifts.forEach(shift => {
+      if (shift.startTime && shift.endTime && shift.location) {
+        const start = new Date(`2000-01-01T${shift.startTime}`);
+        const end = new Date(`2000-01-01T${shift.endTime}`);
+        const diffMs = end - start;
+        const diffHours = diffMs / (1000 * 60 * 60);
+        
+        locationHours[shift.location] = (locationHours[shift.location] || 0) + diffHours;
+      }
+    });
+    
+    return locationHours;
   };
 
   if (loading) {
@@ -224,6 +349,7 @@ export default function AssignShifts() {
         <h1 className="text-2xl font-bold text-gray-900">Assign Shift</h1>
         <button
           type="button"
+          onClick={() => setIsLocationModalOpen(true)}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
         >
           <PlusIcon className="h-4 w-4 mr-2" />
@@ -303,7 +429,7 @@ export default function AssignShifts() {
                 Working Hours
               </label>
               <div className="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-md text-gray-700">
-                {workingHours.toFixed(1)} hours
+                {formatWorkingHours(workingHours)}
               </div>
             </div>
 
@@ -401,14 +527,23 @@ export default function AssignShifts() {
 
       {/* Schedule Preview - Current Week Only */}
       <Card>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Schedule Preview - Current Week Only</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          Schedule Preview - Current Week Only
+          {selectedEmployee && (
+            <span className="text-sm font-normal text-gray-600 ml-2">
+              (Filtered for {employees.find(e => e.id === Number(selectedEmployee))?.name})
+            </span>
+          )}
+        </h2>
         
         {/* Summary Tabs */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           {/* Live Weekly Summary */}
           <div className="bg-blue-50 rounded-lg p-4">
             <h3 className="text-sm font-medium text-blue-900 mb-2">Live Weekly Summary</h3>
-            <div className="text-2xl font-bold text-blue-900">{totalWorkingHours} hours</div>
+            <div className="text-2xl font-bold text-blue-900">
+              {formatWorkingHours(getFilteredTotalHours())}
+            </div>
             <div className="text-sm text-blue-700">Total working hours this week</div>
           </div>
 
@@ -416,12 +551,15 @@ export default function AssignShifts() {
           <div className="bg-green-50 rounded-lg p-4">
             <h3 className="text-sm font-medium text-green-900 mb-2">Hours by Location</h3>
             <div className="space-y-2">
-              {Object.entries(hoursByLocation).map(([location, hours]) => (
+              {Object.entries(getFilteredHoursByLocation()).map(([location, hours]) => (
                 <div key={location} className="flex justify-between text-sm">
                   <span className="text-green-700">{location}</span>
-                  <span className="font-medium text-green-900">{hours}h</span>
+                  <span className="font-medium text-green-900">{formatWorkingHours(hours)}</span>
                 </div>
               ))}
+              {Object.keys(getFilteredHoursByLocation()).length === 0 && (
+                <div className="text-sm text-green-600">No shifts assigned</div>
+              )}
             </div>
           </div>
         </div>
@@ -432,7 +570,7 @@ export default function AssignShifts() {
             <h3 className="text-sm font-medium text-gray-900">Week View</h3>
           </div>
           <div className="divide-y divide-gray-200">
-            {currentWeekShifts.map((shift) => (
+            {getFilteredShifts().map((shift) => (
               <div key={shift.id} className="px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center space-x-4">
                   <div className="text-sm font-medium text-gray-900 w-20">
@@ -465,6 +603,11 @@ export default function AssignShifts() {
                 </div>
               </div>
             ))}
+            {getFilteredShifts().length === 0 && (
+              <div className="px-4 py-8 text-center text-gray-500">
+                {selectedEmployee ? 'No shifts assigned to this employee this week.' : 'No shifts assigned this week.'}
+              </div>
+            )}
           </div>
         </div>
 
@@ -486,6 +629,14 @@ export default function AssignShifts() {
           </button>
         </div>
       </Card>
+
+      {/* Location Modal */}
+      <LocationModal
+        isOpen={isLocationModalOpen}
+        onClose={() => setIsLocationModalOpen(false)}
+        onSave={handleSaveLocation}
+        onLocationAdded={handleLocationAdded}
+      />
     </div>
   );
 }

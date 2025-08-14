@@ -11,7 +11,8 @@ import {
   ComputerDesktopIcon,
   CalendarIcon,
   CheckIcon,
-  XMarkIcon
+  XMarkIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 
 export default function Shifts() {
@@ -23,6 +24,7 @@ export default function Shifts() {
   const [checkingOut, setCheckingOut] = useState(false);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [locationError, setLocationError] = useState('');
 
   useEffect(() => {
     loadShifts();
@@ -41,24 +43,99 @@ export default function Shifts() {
     }
   };
 
+  // Calculate distance between two coordinates using Haversine formula
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c; // Distance in kilometers
+  };
+
+  // Check if employee is within allowed range of their assigned shift location
+  const validateLocationForShift = async (currentLat, currentLon) => {
+    try {
+      // Get today's shifts to check location
+      const today = new Date().toISOString().slice(0, 10);
+      const todayShifts = shifts.filter(shift => shift.date === today);
+      
+      if (todayShifts.length === 0) {
+        return { valid: false, message: 'No shift scheduled for today.' };
+      }
+
+      // Check if any of today's shifts have a location that matches current position
+      for (const shift of todayShifts) {
+        if (shift.location_name && shift.latitude && shift.longitude) {
+          const distance = calculateDistance(
+            currentLat, 
+            currentLon, 
+            shift.latitude, 
+            shift.longitude
+          );
+          
+          // Convert to meters (100 meters = 0.1 km)
+          const distanceInMeters = distance * 1000;
+          
+          if (distanceInMeters <= 100) {
+            return { 
+              valid: true, 
+              locationName: shift.location_name,
+              message: `Check-in successful at ${shift.location_name}`
+            };
+          }
+        }
+      }
+
+      return { 
+        valid: false, 
+        message: 'You are not within the allowed check-in range for this location. Please move closer to your assigned work location.'
+      };
+    } catch (error) {
+      console.error('Error validating location:', error);
+      return { valid: false, message: 'Error validating location. Please try again.' };
+    }
+  };
+
   const checkIn = async () => {
     try {
       setCheckingIn(true);
+      setLocationError('');
+      setError('');
+      
       const location = await getCurrentLocation();
+      if (!location) {
+        setError('Unable to get your current location. Please enable location services and try again.');
+        return;
+      }
+
+      // Validate location against assigned shift
+      const locationValidation = await validateLocationForShift(location.latitude, location.longitude);
+      
+      if (!locationValidation.valid) {
+        setLocationError(locationValidation.message);
+        return;
+      }
+
       const deviceType = getDeviceType();
       
       const checkInData = {
         timestamp: new Date().toISOString(),
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
-        locationName: location?.name || null,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        locationName: locationValidation.locationName,
         deviceType: deviceType
       };
 
       await api.post('/shifts/check-in', checkInData);
       
-      setSuccessMessage('Check-In Successfully');
+      setSuccessMessage(`Check-In Successfully at ${locationValidation.locationName}`);
       setShowSuccessPopup(true);
+      
+      // Reload shifts to show updated status
+      await loadShifts();
       
       // Hide success message after 6 seconds
       setTimeout(() => setShowSuccessPopup(false), 6000);
@@ -74,19 +151,39 @@ export default function Shifts() {
   const checkOut = async () => {
     try {
       setCheckingOut(true);
+      setLocationError('');
+      setError('');
+      
       const location = await getCurrentLocation();
+      if (!location) {
+        setError('Unable to get your current location. Please enable location services and try again.');
+        return;
+      }
+
+      // For check-out, we'll be more lenient with location validation
+      // but still check if they're reasonably close to any work location
+      const today = new Date().toISOString().slice(0, 10);
+      const todayShifts = shifts.filter(shift => shift.date === today);
+      
+      let locationName = 'Unknown Location';
+      if (todayShifts.length > 0 && todayShifts[0].location_name) {
+        locationName = todayShifts[0].location_name;
+      }
       
       const checkOutData = {
         timestamp: new Date().toISOString(),
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
-        locationName: location?.name || null
+        latitude: location.latitude,
+        longitude: location.longitude,
+        locationName: locationName
       };
 
       await api.post('/shifts/check-out', checkOutData);
       
-      setSuccessMessage('Check-Out Successfully');
+      setSuccessMessage(`Check-Out Successfully from ${locationName}`);
       setShowSuccessPopup(true);
+      
+      // Reload shifts to show updated status
+      await loadShifts();
       
       // Hide success message after 6 seconds
       setTimeout(() => setShowSuccessPopup(false), 6000);
@@ -193,6 +290,18 @@ export default function Shifts() {
         </div>
       )}
 
+      {/* Location Error Message */}
+      {locationError && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+          <div className="flex">
+            <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
+            <div className="ml-3">
+              <p className="text-sm font-medium text-yellow-800">{locationError}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Shift Actions */}
       <Card title="Shift Actions">
         <div className="space-y-4">
@@ -216,6 +325,7 @@ export default function Shifts() {
           <div className="text-sm text-gray-600 space-y-1">
             <p>• Automatically captures your current date, time, and location</p>
             <p>• Uses high-accuracy GPS positioning</p>
+            <p>• Check-in only allowed within 100 meters of your assigned work location</p>
           </div>
 
           {/* Today's Shift Snippet */}
@@ -232,6 +342,11 @@ export default function Shifts() {
                     <MapPinIcon className="h-4 w-4 inline mr-1" />
                     {shift.location_name || 'Location not specified'}
                   </p>
+                  {shift.latitude && shift.longitude && (
+                    <p className="text-xs text-blue-600">
+                      GPS: {shift.latitude.toFixed(6)}, {shift.longitude.toFixed(6)}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

@@ -496,7 +496,7 @@ export const db = {
     }
     
     return this.database.prepare(`
-      SELECT s.*, l.name as location_name 
+      SELECT s.*, l.name as location_name, l.latitude, l.longitude
       FROM ${tableName} s 
       LEFT JOIN locations l ON s.location_id = l.id 
       ORDER BY s.date ASC, s.start_time ASC
