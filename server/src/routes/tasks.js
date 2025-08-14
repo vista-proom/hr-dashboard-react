@@ -4,6 +4,12 @@ import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
+// List tasks for current user
+router.get('/', (req, res) => {
+  const tasks = db.listTasksForUser(req.user.id);
+  res.json(tasks);
+});
+
 // List tasks assigned by current manager
 router.get('/assigned-by/me', requireRole('Manager'), (req, res) => {
   const allUsers = db.getAllUserStats();
