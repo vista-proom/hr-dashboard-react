@@ -270,6 +270,11 @@ export default function AssignShifts() {
     setSuccessMessage('Shift added to preview. Open Preview Schedule to submit.');
     setShowSuccess(true);
     setTimeout(() => setShowSuccess(false), 3000);
+    // Clear inputs after adding to preview
+    setSelectedEmployee('');
+    setSelectedDate(toIsoUTC(getUpcomingSaturdayUTC()));
+    setStartTime(''); setEndTime(''); setSelectedLocation(''); setSelectedKind('Work');
+    setWorkingHours(0); setDraftShift(null);
   };
 
   const clearForm = () => {
@@ -358,8 +363,17 @@ export default function AssignShifts() {
   const removePreviewShift = (id) => setPreviewShifts(prev => prev.filter(s => s.id !== id));
 
   const handleDeleteLocation = async (id) => {
-    try { await api.delete(`/locations/${id}`); setLocations(prev => prev.filter(l => l.id !== id)); }
-    catch (err) { console.error('Delete location failed', err); setError('Failed to delete location.'); }
+    try {
+      if (!window.confirm('Are you sure you want to delete this location?')) return;
+      await api.delete(`/locations/${id}`);
+      setLocations(prev => prev.filter(l => l.id !== id));
+    } catch (err) {
+      console.error('Delete location failed', err);
+      const msg = (err?.response?.status === 409)
+        ? 'Cannot delete: location is linked to existing shifts.'
+        : 'Failed to delete location.';
+      setError(msg);
+    }
   };
 
   const submitPreviewShifts = async () => {
@@ -373,6 +387,20 @@ export default function AssignShifts() {
       setSuccessMessage('Shifts submitted successfully.'); setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 4000);
     } catch (err) { console.error('Error submitting shifts', err); setError('Failed to submit shifts.'); }
+  };
+
+  // Totals for preview-only (exclude existing confirmed shifts)
+  const getPreviewFilteredShifts = () => {
+    if (!selectedEmployee) return previewShifts;
+    const employee = employees.find(e => e.id === Number(selectedEmployee));
+    if (!employee) return previewShifts;
+    return previewShifts.filter(s => s.employee === employee.name);
+  };
+  const getPreviewTotalHours = () => getPreviewFilteredShifts().reduce((sum, s) => sum + getShiftHours(s), 0);
+  const getPreviewHoursByLocation = () => {
+    const map = {};
+    getPreviewFilteredShifts().forEach(s => { if (s.location) map[s.location] = (map[s.location] || 0) + getShiftHours(s); });
+    return map;
   };
 
   if (loading) {
@@ -631,16 +659,16 @@ export default function AssignShifts() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
                   <div className="text-sm font-medium text-blue-900 mb-1">Live Weekly Summary</div>
-                  <div className="text-2xl font-bold text-blue-900">{formatWorkingHours(getFilteredTotalHours())}</div>
-                  <div className="text-sm text-blue-700">Total working hours this week</div>
+                  <div className="text-2xl font-bold text-blue-900">{formatWorkingHours(getPreviewTotalHours())}</div>
+                  <div className="text-sm text-blue-700">Total working hours this week (preview only)</div>
                 </div>
                 <div className="bg-green-50 border border-green-100 rounded-lg p-4">
                   <div className="text-sm font-medium text-green-900 mb-2">Hours by Location</div>
                   <div className="space-y-1">
-                    {Object.entries(getFilteredHoursByLocation()).map(([loc, hrs]) => (
+                    {Object.entries(getPreviewHoursByLocation()).map(([loc, hrs]) => (
                       <div key={loc} className="flex justify-between text-sm"><span className="text-green-700">{loc}</span><span className="font-medium text-green-900">{formatWorkingHours(hrs)}</span></div>
                     ))}
-                    {Object.keys(getFilteredHoursByLocation()).length === 0 && (<div className="text-sm text-green-700">No locations assigned yet</div>)}
+                    {Object.keys(getPreviewHoursByLocation()).length === 0 && (<div className="text-sm text-green-700">No locations assigned yet</div>)}
                   </div>
                 </div>
               </div>
