@@ -84,4 +84,14 @@ router.get('/export/:userId', requireRole('Viewer', 'Manager'), (req, res) => {
   res.json(shifts);
 });
 
+// Delete shift (Manager only)
+router.delete('/:shiftId', requireRole('Manager'), (req, res) => {
+  const shiftId = Number(req.params.shiftId);
+  const shift = db.getShiftById(shiftId);
+  if (!shift) return res.status(404).json({ error: 'Shift not found' });
+  
+  db.deleteShift(shiftId);
+  res.status(204).end();
+});
+
 export default router;

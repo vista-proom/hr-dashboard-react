@@ -292,6 +292,49 @@ export const db = {
     return this.getUserById(id);
   },
 
+  updateUserProfile(id, fields) {
+    const current = this.getUserById(id);
+    if (!current) return null;
+    const updated = { ...current, ...fields };
+    const now = new Date().toISOString();
+    
+    const updateFields = [];
+    const updateValues = [];
+    
+    if (fields.name !== undefined) {
+      updateFields.push('name = ?');
+      updateValues.push(fields.name);
+    }
+    if (fields.profile_url !== undefined) {
+      updateFields.push('profile_url = ?');
+      updateValues.push(fields.profile_url);
+    }
+    if (fields.linkedin_url !== undefined) {
+      updateFields.push('linkedin_url = ?');
+      updateValues.push(fields.linkedin_url);
+    }
+    if (fields.whatsapp !== undefined) {
+      updateFields.push('whatsapp = ?');
+      updateValues.push(fields.whatsapp);
+    }
+    
+    if (updateFields.length === 0) return current;
+    
+    updateFields.push('updated_at = ?');
+    updateValues.push(now);
+    updateValues.push(id);
+    
+    this.database.prepare(`
+      UPDATE users SET ${updateFields.join(', ')} WHERE id = ?
+    `).run(...updateValues);
+    
+    return this.getUserById(id);
+  },
+
+  changeUserPassword(id, passwordHash) {
+    this.database.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
+  },
+
   deleteUser(id) {
     this.database.prepare('DELETE FROM users WHERE id = ?').run(id);
   },
@@ -375,6 +418,22 @@ export const db = {
     this.database.prepare('DELETE FROM tasks WHERE id = ?').run(id);
   },
 
+  getTask(id) {
+    const row = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    return row ? {
+      id: row.id,
+      user_id: row.user_id,
+      name: row.name,
+      description: row.description,
+      assigned_by: row.assigned_by,
+      due_date: row.due_date,
+      status: row.status,
+      created_at: row.created_at,
+      last_status_modified_at: row.last_status_modified_at,
+      modified_by: row.modified_by
+    } : null;
+  },
+
   // Required Hours
   getRequiredHours(location) {
     return this.database.prepare('SELECT * FROM required_hours WHERE location = ?').get(location);
@@ -446,6 +505,14 @@ export const db = {
     const ampm = hours >= 12 ? 'PM' : 'AM';
     const displayHours = ((hours + 11) % 12) + 1;
     return `${displayHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+  },
+
+  getShiftById(shiftId) {
+    return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(shiftId);
+  },
+
+  deleteShift(shiftId) {
+    this.database.prepare('DELETE FROM shifts WHERE id = ?').run(shiftId);
   },
 
   // Location History (legacy)
