@@ -4,6 +4,12 @@ import { requireRole } from '../middleware/auth.js';
 
 const router = Router();
 
+// List requests for current user (same as /me)
+router.get('/', (req, res) => {
+  const data = db.listRequestsForUser(req.user.id);
+  res.json(data);
+});
+
 // Employee: create a request
 router.post('/', (req, res) => {
   const { managerId, subject, type, body } = req.body || {};

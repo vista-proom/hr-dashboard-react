@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import api from '../api';
+import { io as socketIOClient } from 'socket.io-client';
 
 const AuthContext = createContext(null);
 
@@ -9,6 +10,7 @@ export function AuthProvider({ children }) {
     return raw ? JSON.parse(raw) : null;
   });
   const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [socket, setSocket] = useState(null);
 
   useEffect(() => {
     if (user) localStorage.setItem('user', JSON.stringify(user));
@@ -20,6 +22,39 @@ export function AuthProvider({ children }) {
     else localStorage.removeItem('token');
   }, [token]);
 
+  // Initialize socket connection for real-time updates
+  useEffect(() => {
+    if (!user || !token) {
+      if (socket) {
+        try { socket.disconnect(); } catch {}
+      }
+      setSocket(null);
+      return;
+    }
+
+    // Prefer explicit env, else infer server URL (fallback to same origin)
+    const envUrl = import.meta?.env?.VITE_SOCKET_URL;
+    let url = envUrl || '';
+    if (!url) {
+      const { protocol, hostname } = window.location;
+      url = `${protocol}//${hostname}${window.location.port ? ':' + window.location.port : ''}`;
+    }
+
+    const s = socketIOClient(url, {
+      withCredentials: true,
+    });
+
+    s.on('connect', () => {
+      s.emit('join-user', user.id);
+    });
+
+    setSocket(s);
+
+    return () => {
+      try { s.disconnect(); } catch {}
+    };
+  }, [user, token]);
+
   const login = async (email, password) => {
     const resp = await api.post('/auth/login', { email, password });
     setToken(resp.data.token);
@@ -27,9 +62,19 @@ export function AuthProvider({ children }) {
     return resp.data.user;
   };
 
-  const logout = () => {
-    setToken(null);
-    setUser(null);
+  const logout = async () => {
+    try {
+      // Call backend logout endpoint to record logout time
+      if (token) {
+        await api.post('/auth/logout');
+      }
+    } catch (error) {
+      console.error('Error during logout:', error);
+      // Continue with logout even if backend call fails
+    } finally {
+      setToken(null);
+      setUser(null);
+    }
   };
 
   const getCurrentLocation = () => new Promise((resolve) => {
@@ -53,7 +98,7 @@ export function AuthProvider({ children }) {
     return 'desktop';
   };
 
-  const value = useMemo(() => ({ user, token, login, logout, setUser, getCurrentLocation, getDeviceType }), [user, token]);
+  const value = useMemo(() => ({ user, token, login, logout, setUser, getCurrentLocation, getDeviceType, socket }), [user, token, socket]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
