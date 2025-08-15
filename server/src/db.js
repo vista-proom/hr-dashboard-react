@@ -564,22 +564,34 @@ export const db = {
 
   getEmployeeShifts(employeeId) {
     const tableName = `employee_shifts_${employeeId}`;
+    console.log('Getting shifts for table:', tableName);
     
     // Check if table exists
     const tableExists = this.database.prepare(`
       SELECT name FROM sqlite_master WHERE type='table' AND name=?
     `).get(tableName);
     
+    console.log('Table exists check:', { tableName, exists: !!tableExists });
+    
     if (!tableExists) {
+      console.log('Table does not exist, returning empty array');
       return [];
     }
     
-    return this.database.prepare(`
-      SELECT s.*, l.name as location_name, l.latitude, l.longitude
-      FROM ${tableName} s 
-      LEFT JOIN locations l ON s.location_id = l.id 
-      ORDER BY s.date ASC, s.start_time ASC
-    `).all();
+    try {
+      const shifts = this.database.prepare(`
+        SELECT s.*, l.name as location_name, l.latitude, l.longitude
+        FROM ${tableName} s 
+        LEFT JOIN locations l ON s.location_id = l.id 
+        ORDER BY s.date ASC, s.start_time ASC
+      `).all();
+      
+      console.log('Retrieved shifts:', shifts);
+      return shifts;
+    } catch (error) {
+      console.error('Error getting employee shifts:', error);
+      return [];
+    }
   },
 
   deleteEmployeeShift(employeeId, shiftId) {

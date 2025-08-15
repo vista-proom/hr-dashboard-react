@@ -118,6 +118,7 @@ router.get('/:id/comprehensive', requireRole('Viewer', 'Manager'), (req, res) =>
     
     // Get assigned shifts (from employee-shifts table) for the Assigned Shifts section
     const assignedShifts = db.getEmployeeShifts(userId);
+    console.log('Assigned shifts for user', userId, ':', assignedShifts);
     
     const result = {
       ...comprehensiveDetails,
@@ -130,6 +131,7 @@ router.get('/:id/comprehensive', requireRole('Viewer', 'Manager'), (req, res) =>
       assignedShifts // This will populate the Assigned Shifts section
     };
     
+    console.log('Final result assignedShifts:', result.assignedShifts);
     res.json(result);
   } catch (error) {
     console.error('Error getting comprehensive employee details:', error);
