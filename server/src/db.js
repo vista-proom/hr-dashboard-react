@@ -751,17 +751,6 @@ export const db = {
     `).all(managerId);
   },
 
-  listPendingRequests() {
-    return this.database.prepare(`
-      SELECT r.*, u.name as user_name, u.annual_balance, u.casual_balance, m.name as manager_name
-      FROM requests r 
-      LEFT JOIN users u ON r.user_id = u.id 
-      LEFT JOIN users m ON r.manager_id = m.id
-      WHERE r.status = 'Under Review' 
-      ORDER BY r.created_at DESC
-    `).all();
-  },
-
   createRequest({ userId, subject, type, body, managerId }) {
     const now = new Date().toISOString();
     const r = this.database.prepare(`
