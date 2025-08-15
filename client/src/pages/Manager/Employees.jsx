@@ -7,6 +7,7 @@ function EmployeeModal({ employee, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [loginHistoryLimit, setLoginHistoryLimit] = useState(4);
 
   const refresh = async () => {
     try {
@@ -65,6 +66,19 @@ function EmployeeModal({ employee, onClose }) {
     }
   };
 
+  const deleteAssignedShift = async (shiftId) => {
+    if (!confirm('Are you sure you want to delete this assigned shift?')) return;
+    
+    try {
+      await api.delete(`/employee-shifts/${employee.id}/${shiftId}`);
+      setHasChanges(true);
+      await refresh();
+    } catch (err) {
+      console.error('Error deleting assigned shift:', err);
+      alert('Failed to delete assigned shift. Please try again.');
+    }
+  };
+
   const exportToExcel = () => {
     if (!details) return;
     
@@ -110,6 +124,10 @@ function EmployeeModal({ employee, onClose }) {
     if (e.target === e.currentTarget) {
       onClose();
     }
+  };
+
+  const loadMoreLoginHistory = () => {
+    setLoginHistoryLimit(prev => prev + 10);
   };
 
   if (!employee) return null;
@@ -259,8 +277,62 @@ function EmployeeModal({ employee, onClose }) {
                 </div>
               </Card>
 
-              {/* Shifts */}
+              {/* NEW: Assigned Shifts Section */}
               <Card title="Assigned Shifts">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left border-b border-gray-200">
+                        <th className="py-3 px-2 font-medium text-gray-700">Date</th>
+                        <th className="py-3 px-2 font-medium text-gray-700">Start Time</th>
+                        <th className="py-3 px-2 font-medium text-gray-700">End Time</th>
+                        <th className="py-3 px-2 font-medium text-gray-700">Location</th>
+                        <th className="py-3 px-2 font-medium text-gray-700">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {details.assignedShifts && details.assignedShifts.length > 0 ? (
+                        details.assignedShifts.map((shift) => (
+                          <tr key={shift.id} className="border-b border-gray-100 last:border-0">
+                            <td className="py-3 px-2">{shift.date || 'N/A'}</td>
+                            <td className="py-3 px-2">{shift.start_time || 'N/A'}</td>
+                            <td className="py-3 px-2">{shift.end_time || 'N/A'}</td>
+                            <td className="py-3 px-2">{shift.location_name || 'N/A'}</td>
+                            <td className="py-3 px-2">
+                              <div className="flex gap-2">
+                                <button 
+                                  className="text-blue-600 hover:text-blue-800 p-1"
+                                  title="Edit shift"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                  </svg>
+                                </button>
+                                <button 
+                                  onClick={() => deleteAssignedShift(shift.id)} 
+                                  className="text-red-600 hover:text-red-800 p-1"
+                                  title="Delete shift"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="5" className="py-4 text-center text-gray-500">No shifts found</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+
+              {/* Login History - Renamed and with lazy loading */}
+              <Card title="Login History">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -274,7 +346,7 @@ function EmployeeModal({ employee, onClose }) {
                     </thead>
                     <tbody>
                       {details.shifts && details.shifts.length > 0 ? (
-                        details.shifts.map((shift) => (
+                        details.shifts.slice(0, loginHistoryLimit).map((shift) => (
                           <tr key={shift.id} className="border-b border-gray-100 last:border-0">
                             <td className="py-3 px-2">{shift.check_in_date || 'N/A'}</td>
                             <td className="py-3 px-2">{shift.check_in_time_12h || 'N/A'}</td>
@@ -305,11 +377,23 @@ function EmployeeModal({ employee, onClose }) {
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="5" className="py-4 text-center text-gray-500">No shifts found</td>
+                          <td colSpan="5" className="py-4 text-center text-gray-500">No login history found</td>
                         </tr>
                       )}
                     </tbody>
                   </table>
+                  
+                  {/* Lazy loading "See More" button */}
+                  {details.shifts && details.shifts.length > loginHistoryLimit && (
+                    <div className="flex justify-end mt-4">
+                      <button
+                        onClick={loadMoreLoginHistory}
+                        className="text-blue-600 hover:text-blue-800 text-sm font-medium underline"
+                      >
+                        See More
+                      </button>
+                    </div>
+                  )}
                 </div>
               </Card>
             </>

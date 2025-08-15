@@ -116,6 +116,9 @@ router.get('/:id/comprehensive', requireRole('Viewer', 'Manager'), (req, res) =>
     const currentLocation = currentShift?.check_in_location_name || 'N/A';
     const lastCheckIn = currentShift?.check_in_time || null;
     
+    // Get assigned shifts (from employee-shifts table) for the Assigned Shifts section
+    const assignedShifts = db.getEmployeeShifts(userId);
+    
     const result = {
       ...comprehensiveDetails,
       currentStatus,
@@ -123,7 +126,8 @@ router.get('/:id/comprehensive', requireRole('Viewer', 'Manager'), (req, res) =>
       lastCheckIn,
       totalHoursScheduled: Math.round(totalHoursScheduled * 100) / 100,
       totalHoursWorked: Math.round(totalHoursWorked * 100) / 100,
-      monthlyShifts
+      monthlyShifts,
+      assignedShifts // This will populate the Assigned Shifts section
     };
     
     res.json(result);

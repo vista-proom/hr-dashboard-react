@@ -74,17 +74,23 @@ export default function Shifts() {
     const onLocationsUpdated = () => {
       reloadLocations();
     };
+    const onAssignedShiftDeleted = ({ id }) => {
+      // Refresh assigned shifts when one is deleted
+      loadData();
+    };
 
     socket.on('shift-created', onCreated);
     socket.on('shift-updated', onUpdated);
     socket.on('shift-deleted', onDeleted);
     socket.on('locations-updated', onLocationsUpdated);
+    socket.on('assigned-shift-deleted', onAssignedShiftDeleted);
 
     return () => {
       socket.off('shift-created', onCreated);
       socket.off('shift-updated', onUpdated);
       socket.off('shift-deleted', onDeleted);
       socket.off('locations-updated', onLocationsUpdated);
+      socket.off('assigned-shift-deleted', onAssignedShiftDeleted);
     };
   }, [socket, user]);
 
@@ -115,11 +121,20 @@ export default function Shifts() {
       const location = await getCurrentLocation();
       const deviceType = getDeviceType();
       
+      // Find nearby saved location if within 100 meters
+      let locationName = null;
+      if (location?.latitude && location?.longitude) {
+        const nearbyLocation = nearestSavedLocation(location.latitude, location.longitude);
+        if (nearbyLocation) {
+          locationName = nearbyLocation.name;
+        }
+      }
+      
       const checkInData = {
         timestamp: new Date().toISOString(),
         latitude: location?.latitude || null,
         longitude: location?.longitude || null,
-        locationName: location?.name || null,
+        locationName: locationName,
         deviceType: deviceType
       };
 
@@ -143,11 +158,20 @@ export default function Shifts() {
       setCheckingOut(true);
       const location = await getCurrentLocation();
       
+      // Find nearby saved location if within 100 meters
+      let locationName = null;
+      if (location?.latitude && location?.longitude) {
+        const nearbyLocation = nearestSavedLocation(location.latitude, location.longitude);
+        if (nearbyLocation) {
+          locationName = nearbyLocation.name;
+        }
+      }
+      
       const checkOutData = {
         timestamp: new Date().toISOString(),
         latitude: location?.latitude || null,
         longitude: location?.longitude || null,
-        locationName: location?.name || null
+        locationName: locationName
       };
 
       await api.post('/shifts/check-out', checkOutData);
@@ -354,6 +378,11 @@ export default function Shifts() {
       const outLoc = s.check_out_lat != null && s.check_out_lng != null ? { lat: s.check_out_lat, lng: s.check_out_lng } : null;
       const nearIn = inLoc ? nearestSavedLocation(inLoc.lat, inLoc.lng) : null;
       const nearOut = outLoc ? nearestSavedLocation(outLoc.lat, outLoc.lng) : null;
+      
+      // Format location labels with #SavedLocationName when applicable
+      const inLabel = nearIn ? `#${nearIn.name}` : (inLoc ? 'Open in Maps' : 'Location Unavailable');
+      const outLabel = nearOut ? `#${nearOut.name}` : (outLoc ? 'Open in Maps' : 'Location Unavailable');
+      
       return {
         id: s.id,
         date: date ? new Date(date).toLocaleDateString('en-GB') : '—',
@@ -361,8 +390,8 @@ export default function Shifts() {
         outTime: s.check_out_time_12h || '—',
         inLink: inLoc ? googleMapsLink(inLoc.lat, inLoc.lng) : null,
         outLink: outLoc ? googleMapsLink(outLoc.lat, outLoc.lng) : null,
-        inLabel: nearIn ? `#${nearIn.name}` : (inLoc ? 'Open in Maps' : 'Location Unavailable'),
-        outLabel: nearOut ? `#${nearOut.name}` : (outLoc ? 'Open in Maps' : 'Location Unavailable'),
+        inLabel,
+        outLabel,
         device: s.device_type || 'desktop'
       };
     });

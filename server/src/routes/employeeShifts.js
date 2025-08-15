@@ -95,4 +95,26 @@ router.delete('/:id', requireRole('Manager'), (req, res) => {
   }
 });
 
+// Delete employee shift (Manager only)
+router.delete('/:employeeId/:shiftId', requireRole('Manager'), (req, res) => {
+  const employeeId = Number(req.params.employeeId);
+  const shiftId = Number(req.params.shiftId);
+  
+  try {
+    const deleted = db.deleteEmployeeShift(employeeId, shiftId);
+    if (!deleted) {
+      return res.status(404).json({ error: 'Shift not found' });
+    }
+    
+    // Emit to the employee's room for real-time update
+    const io = req.app.get('io');
+    io.to(`user-${employeeId}`).emit('assigned-shift-deleted', { id: shiftId });
+    
+    res.json({ message: 'Shift deleted successfully', deleted });
+  } catch (error) {
+    console.error('Error deleting employee shift:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;
