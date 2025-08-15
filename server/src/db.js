@@ -1,16 +1,8 @@
 import Database from 'better-sqlite3';
 import bcrypt from 'bcryptjs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-// Get __dirname equivalent for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 function createConnection() {
-  // Allow overriding the SQLite file path using environment variable
-  const dbFile = process.env.DATABASE_FILE || path.join(__dirname, '../../database.sqlite');
-  return new Database(dbFile);
+  return new Database('database.sqlite');
 }
 
 function columnExists(database, table, column) {
