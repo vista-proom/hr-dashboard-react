@@ -70,12 +70,24 @@ function EmployeeModal({ employee, onClose }) {
     if (!confirm('Are you sure you want to delete this assigned shift?')) return;
     
     try {
-      await api.delete(`/employee-shifts/${employee.id}/${shiftId}`);
+      console.log('Deleting assigned shift:', { employeeId: employee.id, shiftId });
+      
+      const response = await api.delete(`/employee-shifts/${employee.id}/${shiftId}`);
+      console.log('Delete response:', response.data);
+      
       setHasChanges(true);
       await refresh();
+      
+      // Show success message
+      alert('Assigned shift deleted successfully!');
+      
     } catch (err) {
       console.error('Error deleting assigned shift:', err);
-      alert('Failed to delete assigned shift. Please try again.');
+      console.error('Error response:', err.response?.data);
+      console.error('Error status:', err.response?.status);
+      
+      const errorMsg = err.response?.data?.error || 'Failed to delete assigned shift. Please try again.';
+      alert(`Error: ${errorMsg}`);
     }
   };
 

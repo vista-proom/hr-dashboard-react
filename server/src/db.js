@@ -584,7 +584,17 @@ export const db = {
 
   deleteEmployeeShift(employeeId, shiftId) {
     const tableName = `employee_shifts_${employeeId}`;
-    this.database.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(shiftId);
+    
+    // Get the shift before deleting it
+    const shift = this.database.prepare(`SELECT * FROM ${tableName} WHERE id = ?`).get(shiftId);
+    
+    if (shift) {
+      // Delete the shift
+      this.database.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(shiftId);
+      return shift;
+    }
+    
+    return null;
   },
 
   updateEmployeeShift(employeeId, shiftId, shiftData) {
