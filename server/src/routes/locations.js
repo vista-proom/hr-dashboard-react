@@ -11,6 +11,11 @@ router.get('/', (req, res) => {
 router.post('/', requireRole('Manager'), (req, res) => {
   const { name, googleMapsUrl, latitude, longitude } = req.body || {};
   const loc = db.createLocation({ name, google_maps_url: googleMapsUrl, latitude, longitude });
+
+  // Broadcast that locations changed
+  const io = req.app.get('io');
+  io.emit('locations-updated');
+
   res.status(201).json(loc);
 });
 
@@ -38,6 +43,10 @@ router.put('/:id/coordinates', requireRole('Manager'), (req, res) => {
   if (!location) {
     return res.status(404).json({ error: 'Location not found' });
   }
+
+  // Broadcast that locations changed
+  const io = req.app.get('io');
+  io.emit('locations-updated');
   
   res.json(location);
 });
@@ -49,6 +58,10 @@ router.delete('/:id', requireRole('Manager'), (req, res) => {
   if (!deletedLocation) {
     return res.status(404).json({ error: 'Location not found' });
   }
+
+  // Broadcast that locations changed
+  const io = req.app.get('io');
+  io.emit('locations-updated');
   
   res.json({ message: 'Location deleted successfully', deletedLocation });
 });

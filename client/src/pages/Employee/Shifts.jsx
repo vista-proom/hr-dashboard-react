@@ -17,7 +17,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 export default function Shifts() {
-  const { user, getCurrentLocation, getDeviceType } = useAuth();
+  const { user, getCurrentLocation, getDeviceType, socket } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [loginHistory, setLoginHistory] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -39,6 +39,54 @@ export default function Shifts() {
   useEffect(() => {
     loadData();
   }, []);
+
+  const reloadSessions = async () => {
+    try {
+      const sessionsRes = await api.get('/shifts');
+      setSessions(sessionsRes.data || []);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const reloadLocations = async () => {
+    try {
+      const locationsRes = await api.get('/locations');
+      setLocations(locationsRes.data || []);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // Real-time updates via socket
+  useEffect(() => {
+    if (!socket || !user) return;
+
+    const onCreated = (shift) => {
+      setSessions((prev) => [shift, ...prev]);
+    };
+    const onUpdated = (shift) => {
+      setSessions((prev) => prev.map((s) => (s.id === shift.id ? { ...s, ...shift } : s)));
+    };
+    const onDeleted = ({ id }) => {
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+    };
+    const onLocationsUpdated = () => {
+      reloadLocations();
+    };
+
+    socket.on('shift-created', onCreated);
+    socket.on('shift-updated', onUpdated);
+    socket.on('shift-deleted', onDeleted);
+    socket.on('locations-updated', onLocationsUpdated);
+
+    return () => {
+      socket.off('shift-created', onCreated);
+      socket.off('shift-updated', onUpdated);
+      socket.off('shift-deleted', onDeleted);
+      socket.off('locations-updated', onLocationsUpdated);
+    };
+  }, [socket, user]);
 
   const loadData = async () => {
     try {
@@ -80,7 +128,7 @@ export default function Shifts() {
       setShowSuccessPopup(true);
       setTimeout(() => setShowSuccessPopup(false), 6000);
       // Refresh live data
-      await loadData();
+      await reloadSessions();
       
     } catch (error) {
       console.error('Error checking in:', error);
@@ -107,7 +155,7 @@ export default function Shifts() {
       setShowSuccessPopup(true);
       setTimeout(() => setShowSuccessPopup(false), 6000);
       // Refresh live data
-      await loadData();
+      await reloadSessions();
       
     } catch (error) {
       console.error('Error checking out:', error);
@@ -198,31 +246,44 @@ export default function Shifts() {
     }
   };
 
+  const getDeviceLabel = (deviceType) => {
+    switch ((deviceType || '').toLowerCase()) {
+      case 'mobile':
+        return { label: 'Mobile', icon: <DevicePhoneMobileIcon className="h-5 w-5" /> };
+      case 'tablet':
+        return { label: 'Tablet', icon: <DeviceTabletIcon className="h-5 w-5" /> };
+      default:
+        return { label: 'PC', icon: <ComputerDesktopIcon className="h-5 w-5" /> };
+    }
+  };
+
   // Proximity helpers for Login History location rendering
   const distanceInKm = (lat1, lon1, lat2, lon2) => {
     if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return Infinity;
     const R = 6371;
     const dLat = ((lat2 - lat1) * Math.PI) / 180;
     const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
   };
 
   const nearestSavedLocation = (lat, lng) => {
     if (lat == null || lng == null) return null;
-    let nearest = null; let minKm = Infinity;
-    locations.forEach(loc => {
-      if (loc.latitude != null && loc.longitude != null) {
-        const d = distanceInKm(lat, lng, loc.latitude, loc.longitude);
-        if (d < minKm) { minKm = d; nearest = { ...loc, distanceKm: d }; }
+    let nearest = null;
+    let minDistance = Infinity;
+    for (const loc of locations) {
+      if (loc.latitude == null || loc.longitude == null) continue;
+      const d = distanceInKm(lat, lng, loc.latitude, loc.longitude);
+      if (d < minDistance) {
+        minDistance = d;
+        nearest = loc;
       }
-    });
-    if (nearest && nearest.distanceKm <= 0.1) return nearest; // within 100m
-    return null;
+    }
+    return minDistance <= 0.1 ? nearest : null; // within 100 meters
   };
 
-  const googleMapsLink = (lat, lng) => `https://maps.google.com/?q=${lat},${lng}`;
+  const googleMapsLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
 
   const getTodayShifts = () => {
     const today = new Date().toISOString().slice(0, 10);
@@ -285,6 +346,60 @@ export default function Shifts() {
     }, 0);
   }, [todayShifts]);
 
+  // --- Redesigned Login History (using sessions/shifts) ---
+  const formattedSessions = useMemo(() => {
+    return (sessions || []).map(s => {
+      const date = s.check_in_date || s.check_out_date || (s.check_in_time ? new Date(s.check_in_time).toISOString().slice(0,10) : null);
+      const inLoc = s.check_in_lat != null && s.check_in_lng != null ? { lat: s.check_in_lat, lng: s.check_in_lng } : null;
+      const outLoc = s.check_out_lat != null && s.check_out_lng != null ? { lat: s.check_out_lat, lng: s.check_out_lng } : null;
+      const nearIn = inLoc ? nearestSavedLocation(inLoc.lat, inLoc.lng) : null;
+      const nearOut = outLoc ? nearestSavedLocation(outLoc.lat, outLoc.lng) : null;
+      return {
+        id: s.id,
+        date: date ? new Date(date).toLocaleDateString('en-GB') : '—',
+        inTime: s.check_in_time_12h || '—',
+        outTime: s.check_out_time_12h || '—',
+        inLink: inLoc ? googleMapsLink(inLoc.lat, inLoc.lng) : null,
+        outLink: outLoc ? googleMapsLink(outLoc.lat, outLoc.lng) : null,
+        inLabel: nearIn ? `#${nearIn.name}` : (inLoc ? 'Open in Maps' : 'Location Unavailable'),
+        outLabel: nearOut ? `#${nearOut.name}` : (outLoc ? 'Open in Maps' : 'Location Unavailable'),
+        device: s.device_type || 'desktop'
+      };
+    });
+  }, [sessions, locations]);
+
+  // Responsive table row renderer
+  const LoginRow = ({ row, index }) => {
+    const { label, icon } = getDeviceLabel(row.device);
+    return (
+      <tr className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} border-b border-gray-100`}>
+        <td className="py-3 px-4">{row.date}</td>
+        <td className="py-3 px-4">{row.inTime}</td>
+        <td className="py-3 px-4">
+          {row.inLink ? (
+            <a href={row.inLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.inLabel}</a>
+          ) : (
+            <span className="text-gray-400">Location Unavailable</span>
+          )}
+        </td>
+        <td className="py-3 px-4">{row.outTime}</td>
+        <td className="py-3 px-4">
+          {row.outLink ? (
+            <a href={row.outLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.outLabel}</a>
+          ) : (
+            <span className="text-gray-400">Location Unavailable</span>
+          )}
+        </td>
+        <td className="py-3 px-4">
+          <div className="flex items-center gap-2 text-gray-700">
+            {icon}
+            <span className="text-sm">{label}</span>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -294,7 +409,7 @@ export default function Shifts() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">My Shifts</h1>
       </div>
@@ -452,78 +567,68 @@ export default function Shifts() {
         )}
       </Card>
 
-      {/* Login History */}
+      {/* Login History - Redesigned */}
       <Card title="Login History" actions={
         <button onClick={exportLoginHistoryToExcel} className="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 transition-colors text-sm">Export to Excel</button>
       }>
-        <div className="overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Date</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">In Time</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">In Location</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Time</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Out Location</th>
-                <th className="text-left py-3 px-4 font-medium text-gray-700">Device</th>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">Date</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">Check-In Time</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">Check-In Location</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">Check-Out Time</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">Check-Out Location</th>
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">Device</th>
               </tr>
             </thead>
             <tbody>
-              {loginHistory.length === 0 ? (
-                <tr className="border-b border-gray-100">
-                  <td colSpan="6" className="py-8 px-4 text-center text-gray-500 italic">No login history available</td>
+              {formattedSessions.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="py-8 px-4 text-center text-gray-500 italic">No history available</td>
                 </tr>
               ) : (
-                loginHistory.map((login) => {
-                  const loginDateISO = new Date(login.login_timestamp).toISOString().slice(0,10);
-                  const relatedShift = sessions.find(s => s.check_in_date === loginDateISO || s.check_out_date === loginDateISO) || {};
-                  const inLat = relatedShift?.check_in_lat ?? null;
-                  const inLng = relatedShift?.check_in_lng ?? null;
-                  const outLat = relatedShift?.check_out_lat ?? null;
-                  const outLng = relatedShift?.check_out_lng ?? null;
-                  const nearIn = nearestSavedLocation(inLat, inLng);
-                  const nearOut = nearestSavedLocation(outLat, outLng);
-                  const active = !login.logout_timestamp;
-                  return (
-                    <tr key={login.id} className="border-b border-gray-100">
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <CalendarIcon className="h-4 w-4 text-gray-400" />
-                          {new Date(login.login_timestamp).toLocaleDateString('en-GB')}
-                          {active && <span className="inline-block h-2 w-2 rounded-full bg-green-500" title="Active session" />}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">{new Date(login.login_timestamp).toLocaleTimeString('en-GB')}</td>
-                      <td className="py-3 px-4">
-                        {inLat != null && inLng != null ? (
-                          nearIn ? (
-                            <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearIn.latitude},${nearIn.longitude}`} target="_blank" rel="noreferrer">{nearIn.name}</a>
-                          ) : (
-                            <a className="text-blue-600 hover:underline" href={googleMapsLink(inLat, inLng)} target="_blank" rel="noreferrer">In Location</a>
-                          )
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">{login.logout_timestamp ? new Date(login.logout_timestamp).toLocaleTimeString('en-GB') : '—'}</td>
-                      <td className="py-3 px-4">
-                        {outLat != null && outLng != null ? (
-                          nearOut ? (
-                            <a className="text-blue-600 hover:underline" href={`https://maps.google.com/?q=${nearOut.latitude},${nearOut.longitude}`} target="_blank" rel="noreferrer">{nearOut.name}</a>
-                          ) : (
-                            <a className="text-blue-600 hover:underline" href={googleMapsLink(outLat, outLng)} target="_blank" rel="noreferrer">Out Location</a>
-                          )
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">{getDeviceIcon('desktop')}</td>
-                    </tr>
-                  );
-                })
+                formattedSessions.map((row, idx) => (
+                  <LoginRow key={row.id} row={row} index={idx} />
+                ))
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile cards */}
+        <div className="md:hidden space-y-3">
+          {formattedSessions.length === 0 ? (
+            <div className="py-4 text-center text-gray-500 italic">No history available</div>
+          ) : (
+            formattedSessions.map((row) => {
+              const { label, icon } = getDeviceLabel(row.device);
+              return (
+                <div key={row.id} className="border rounded-lg p-4 bg-white">
+                  <div className="text-sm text-gray-900 font-medium">Date: {row.date}</div>
+                  <div className="text-sm text-gray-700 mt-1">
+                    Check-In: {row.inTime} at {row.inLink ? (
+                      <a href={row.inLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.inLabel}</a>
+                    ) : (
+                      <span className="text-gray-400">Location Unavailable</span>
+                    )}
+                  </div>
+                  <div className="text-sm text-gray-700 mt-1">
+                    Check-Out: {row.outTime} at {row.outLink ? (
+                      <a href={row.outLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.outLabel}</a>
+                    ) : (
+                      <span className="text-gray-400">Location Unavailable</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-gray-700 mt-2">
+                    {icon}
+                    <span className="text-sm">Device: {label}</span>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </Card>
     </div>

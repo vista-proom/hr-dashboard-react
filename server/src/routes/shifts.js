@@ -32,6 +32,11 @@ router.post('/check-in', (req, res) => {
   }
   
   const shift = db.createShiftCheckIn(userId, { timestamp, latitude, longitude, locationName, deviceType });
+
+  // Emit to this user's room for real-time update
+  const io = req.app.get('io');
+  io.to(`user-${userId}`).emit('shift-created', shift);
+
   res.status(201).json(shift);
 });
 
@@ -54,6 +59,11 @@ router.post('/check-out', (req, res) => {
 
   const shift = db.checkOutShift(userId, { timestamp, latitude, longitude, locationName });
   if (!shift) return res.status(400).json({ error: 'No open shift to check out.' });
+
+  // Emit to this user's room for real-time update
+  const io = req.app.get('io');
+  io.to(`user-${userId}`).emit('shift-updated', shift);
+
   res.json(shift);
 });
 
@@ -91,6 +101,13 @@ router.delete('/:shiftId', requireRole('Manager'), (req, res) => {
   if (!shift) return res.status(404).json({ error: 'Shift not found' });
   
   db.deleteShift(shiftId);
+
+  // Notify the employee immediately
+  const io = req.app.get('io');
+  if (shift.user_id) {
+    io.to(`user-${shift.user_id}`).emit('shift-deleted', { id: shiftId });
+  }
+
   res.status(204).end();
 });
 

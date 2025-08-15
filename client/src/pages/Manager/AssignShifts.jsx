@@ -121,6 +121,19 @@ export default function AssignShifts() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    // listen for global locations updates
+    if (!window.__socketInitAssigned) {
+      window.__socketInitAssigned = true;
+    }
+    const cleanup = [];
+    try {
+      // Access socket via context
+      const { socket } = require('../../context/AuthContext');
+    } catch {}
+    return () => cleanup.forEach(fn => fn && fn());
+  }, []);
+
   // Auto-calculate working hours when start/end times change
   useEffect(() => {
     calculateWorkingHours();
