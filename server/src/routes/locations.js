@@ -53,17 +53,38 @@ router.put('/:id/coordinates', requireRole('Manager'), (req, res) => {
 
 router.delete('/:id', requireRole('Manager'), (req, res) => {
   const locationId = Number(req.params.id);
-  const deletedLocation = db.deleteLocation(locationId);
   
-  if (!deletedLocation) {
-    return res.status(404).json({ error: 'Location not found' });
+  try {
+    // Check if location exists
+    const location = db.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
+    if (!location) {
+      return res.status(404).json({ error: 'Location not found' });
+    }
+    
+    // Check if location has references
+    const hasReferences = db.checkLocationReferences(locationId);
+    
+    // Delete the location (this will also handle references)
+    const deletedLocation = db.deleteLocation(locationId);
+    
+    if (!deletedLocation) {
+      return res.status(500).json({ error: 'Failed to delete location' });
+    }
+    
+    // Broadcast that locations changed
+    const io = req.app.get('io');
+    io.emit('locations-updated');
+    
+    res.json({ 
+      message: 'Location deleted successfully', 
+      deletedLocation,
+      hadReferences: hasReferences,
+      note: hasReferences ? 'Related records were also updated' : 'No related records found'
+    });
+  } catch (error) {
+    console.error('Error deleting location:', error);
+    res.status(500).json({ error: 'Internal server error while deleting location' });
   }
-
-  // Broadcast that locations changed
-  const io = req.app.get('io');
-  io.emit('locations-updated');
-  
-  res.json({ message: 'Location deleted successfully', deletedLocation });
 });
 
 export default router;

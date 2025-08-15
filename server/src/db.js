@@ -630,8 +630,57 @@ export const db = {
     const location = this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
     if (!location) return null;
     
-    this.database.prepare('DELETE FROM locations WHERE id = ?').run(locationId);
-    return location;
+    try {
+      // First, check if this location is referenced anywhere
+      const hasReferences = this.checkLocationReferences(locationId);
+      
+      if (hasReferences) {
+        // Delete all references first
+        this.deleteLocationReferences(locationId);
+      }
+      
+      // Now delete the location
+      this.database.prepare('DELETE FROM locations WHERE id = ?').run(locationId);
+      return location;
+    } catch (error) {
+      console.error('Error deleting location:', error);
+      return null;
+    }
+  },
+
+  checkLocationReferences(locationId) {
+    // Check if location is referenced in shifts table
+    const shiftsRef = this.database.prepare('SELECT COUNT(*) as count FROM shifts WHERE check_in_location_name = (SELECT name FROM locations WHERE id = ?) OR check_out_location_name = (SELECT name FROM locations WHERE id = ?)').get(locationId, locationId);
+    
+    // Check if location is referenced in any employee_shifts tables
+    const tables = this.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'employee_shifts_%'").all();
+    let hasEmployeeShiftsRef = false;
+    
+    for (const table of tables) {
+      const ref = this.database.prepare(`SELECT COUNT(*) as count FROM ${table.name} WHERE location_id = ?`).get(locationId);
+      if (ref.count > 0) {
+        hasEmployeeShiftsRef = true;
+        break;
+      }
+    }
+    
+    return shiftsRef.count > 0 || hasEmployeeShiftsRef;
+  },
+
+  deleteLocationReferences(locationId) {
+    const locationName = this.database.prepare('SELECT name FROM locations WHERE id = ?').get(locationId)?.name;
+    if (!locationName) return;
+    
+    // Delete references in shifts table
+    this.database.prepare('UPDATE shifts SET check_in_location_name = NULL WHERE check_in_location_name = ?').run(locationName);
+    this.database.prepare('UPDATE shifts SET check_out_location_name = NULL WHERE check_out_location_name = ?').run(locationName);
+    
+    // Delete references in all employee_shifts tables
+    const tables = this.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'employee_shifts_%'").all();
+    
+    for (const table of tables) {
+      this.database.prepare(`UPDATE ${table.name} SET location_id = NULL, location_name = NULL WHERE location_id = ?`).run(locationId);
+    }
   },
 
   findNearbyLocation(latitude, longitude, maxDistance = 0.1) {

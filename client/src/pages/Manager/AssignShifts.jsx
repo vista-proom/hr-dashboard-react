@@ -378,14 +378,34 @@ export default function AssignShifts() {
   const handleDeleteLocation = async (id) => {
     try {
       if (!window.confirm('Are you sure you want to delete this location?')) return;
-      await api.delete(`/locations/${id}`);
+      
+      const response = await api.delete(`/locations/${id}`);
+      
+      if (response.data.hadReferences) {
+        // Show additional confirmation if location had references
+        const confirmed = window.confirm(
+          'This location is linked to other records. Deleting it will also remove those records. Are you sure you want to proceed?'
+        );
+        
+        if (!confirmed) {
+          // If user cancels, we need to refresh to restore the location
+          await loadData();
+          return;
+        }
+      }
+      
+      // Remove from local state
       setLocations(prev => prev.filter(l => l.id !== id));
+      
+      // Show success message
+      setSuccessMessage(response.data.note || 'Location deleted successfully!');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+      
     } catch (err) {
       console.error('Delete location failed', err);
-      const msg = (err?.response?.status === 409)
-        ? 'Cannot delete: location is linked to existing shifts.'
-        : 'Failed to delete location.';
-      setError(msg);
+      const errorMsg = err.response?.data?.error || 'Failed to delete location';
+      alert(`Error: ${errorMsg}`);
     }
   };
 
