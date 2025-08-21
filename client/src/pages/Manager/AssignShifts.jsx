@@ -11,7 +11,8 @@ import {
   PlusIcon,
   TrashIcon,
   CheckIcon,
-  XMarkIcon
+  XMarkIcon,
+  PencilSquareIcon
 } from '@heroicons/react/24/outline';
 
 export default function AssignShifts() {
@@ -45,10 +46,92 @@ export default function AssignShifts() {
   // Draft shift state for real-time preview
   const [draftShift, setDraftShift] = useState(null);
 
+  // NEW: local preview shifts that are not yet submitted to backend
+  const [previewShifts, setPreviewShifts] = useState([]);
+
+  // NEW: modal to show preview summary and table
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+
+  // NEW: inline editing state for preview shifts
+  const [editingShiftId, setEditingShiftId] = useState(null);
+  const [editFields, setEditFields] = useState({ startTime: '', endTime: '', locationId: '', kind: 'Work' });
+
+  // NEW: Locations search text
+  const [locationQuery, setLocationQuery] = useState('');
+
   const shiftKinds = ['Work', 'DayOff', 'Sick', 'Vacation', 'Training'];
+
+  // --- Date helpers (UTC to avoid off-by-one) ---
+  const parseIsoToUTCDate = (iso) => {
+    if (!iso) return null;
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+  };
+
+  const toIsoUTC = (date) => {
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const getSaturdayOfWeekUTC = (iso) => {
+    const d = parseIsoToUTCDate(iso);
+    const day = d.getUTCDay(); // 0=Sun..6=Sat
+    const offset = (day + 1) % 7; // days since Saturday
+    const start = new Date(d);
+    start.setUTCDate(d.getUTCDate() - offset);
+    start.setUTCHours(0,0,0,0);
+    return start;
+  };
+
+  const getUpcomingSaturdayUTC = () => {
+    const now = new Date();
+    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const day = todayUTC.getUTCDay();
+    const daysUntilSaturday = (6 - day + 7) % 7;
+    const nextSat = new Date(todayUTC);
+    nextSat.setUTCDate(todayUTC.getUTCDate() + (daysUntilSaturday === 0 ? 7 : daysUntilSaturday));
+    return nextSat;
+  };
+
+  const getWeekDatesUTC = (iso) => {
+    const start = getSaturdayOfWeekUTC(iso);
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setUTCDate(start.getUTCDate() + i);
+      days.push({ date: toIsoUTC(d), dateObj: d });
+    }
+    return days; // Saturday -> Friday
+  };
+
+  const getWeekNumberUTC = (iso) => {
+    const d = parseIsoToUTCDate(iso);
+    const startOfYear = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const startSaturday = getSaturdayOfWeekUTC(toIsoUTC(startOfYear));
+    const diffDays = Math.floor((d - startSaturday) / (1000 * 60 * 60 * 24));
+    return Math.floor(diffDays / 7) + 1;
+  };
+
+  const formatDisplayDate = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const formatDisplayDay = (d) => d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  useEffect(() => {
+    // listen for global locations updates
+    if (!window.__socketInitAssigned) {
+      window.__socketInitAssigned = true;
+    }
+    const cleanup = [];
+    try {
+      // Access socket via context
+      const { socket } = require('../../context/AuthContext');
+    } catch {}
+    return () => cleanup.forEach(fn => fn && fn());
   }, []);
 
   // Auto-calculate working hours when start/end times change
@@ -56,7 +139,7 @@ export default function AssignShifts() {
     calculateWorkingHours();
   }, [startTime, endTime]);
 
-  // Update draft shift when form changes
+  // Update draft shift when form changes (keep for immediate feedback if needed)
   useEffect(() => {
     if (selectedEmployee && selectedDate && startTime && endTime && selectedLocation) {
       const employee = employees.find(e => e.id === Number(selectedEmployee));
@@ -66,11 +149,14 @@ export default function AssignShifts() {
         id: 'draft',
         date: selectedDate,
         employee: employee?.name || '',
+        employeeId: employee?.id || null,
         startTime: startTime,
         endTime: endTime,
         location: location?.name || '',
+        locationId: location?.id || null,
         kind: selectedKind,
-        status: 'draft'
+        status: 'draft',
+        isPreview: true
       });
     } else {
       setDraftShift(null);
@@ -88,11 +174,11 @@ export default function AssignShifts() {
       setEmployees(employeesRes.data.filter(u => u.role === 'Employee'));
       setLocations(locationsRes.data);
       
-      // Set default date to today
-      const today = new Date().toISOString().slice(0, 10);
-      setSelectedDate(today);
+      // Default date: Saturday of the next week not yet started
+      const nextSat = getUpcomingSaturdayUTC();
+      setSelectedDate(toIsoUTC(nextSat));
       
-      // Load current week schedule
+      // Load current week schedule (mock/demo)
       loadCurrentWeekSchedule();
       
     } catch (error) {
@@ -104,19 +190,14 @@ export default function AssignShifts() {
   };
 
   const loadCurrentWeekSchedule = () => {
-    // This would typically call an API to get the current week's schedule
-    // For now, we'll create mock data to demonstrate the UI
     const mockShifts = [
-      { id: 1, date: '2025-08-14', employee: 'Alice Employee', startTime: '09:00', endTime: '17:00', location: 'Main Office', kind: 'Work', status: 'confirmed' },
-      { id: 2, date: '2025-08-15', employee: 'Bob Employee', startTime: '08:00', endTime: '16:00', location: 'Warehouse A', kind: 'Work', status: 'draft' },
+      { id: 1, date: '2025-08-14', employee: 'Alice Employee', employeeId: 2, startTime: '09:00', endTime: '17:00', location: 'Main Office', locationId: 1, kind: 'Work', status: 'confirmed' },
+      { id: 2, date: '2025-08-15', employee: 'Alice Employee', employeeId: 2, startTime: '12:00', endTime: '20:00', location: 'Warehouse A', locationId: 2, kind: 'Work', status: 'draft', isPreview: true },
     ];
     
     setCurrentWeekShifts(mockShifts);
     setTotalWorkingHours(16);
-    setHoursByLocation({
-      'Main Office': 8,
-      'Warehouse A': 8
-    });
+    setHoursByLocation({ 'Main Office': 8, 'Warehouse A': 8 });
   };
 
   const calculateWorkingHours = () => {
@@ -132,12 +213,8 @@ export default function AssignShifts() {
   const formatWorkingHours = (hours) => {
     const wholeHours = Math.floor(hours);
     const minutes = Math.round((hours - wholeHours) * 60);
-    
-    if (minutes === 0) {
-      return `${wholeHours}h`;
-    } else {
-      return `${wholeHours}h ${minutes}m`;
-    }
+    if (minutes === 0) return `${wholeHours}h`;
+    return `${wholeHours}h ${minutes}m`;
   };
 
   const validateForm = () => {
@@ -145,30 +222,22 @@ export default function AssignShifts() {
       setError('Please fill in all required fields.');
       return false;
     }
-
-    // Validate time format and logic
     const start = new Date(`2000-01-01T${startTime}`);
     const end = new Date(`2000-01-01T${endTime}`);
-    
     if (start >= end) {
       setError('End time must be after start time.');
       return false;
     }
-
     return true;
   };
 
+  // Keep original backend submit (not used on Save Shift in preview flow)
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-
-    if (!validateForm()) {
-      return;
-    }
-
+    if (!validateForm()) return;
     try {
       const employee = employees.find(e => e.id === Number(selectedEmployee));
-      
       const shiftData = {
         date: selectedDate,
         startTime: startTime,
@@ -177,89 +246,79 @@ export default function AssignShifts() {
         locationName: locations.find(l => l.id === Number(selectedLocation))?.name || '',
         kind: selectedKind
       };
-
-      await api.post('/employee-shifts/assign', {
-        employeeId: employee.id,
-        employeeName: employee.name,
-        shiftData
-      });
-
-      // Show success message
+      await api.post('/employee-shifts/assign', { employeeId: employee.id, employeeName: employee.name, shiftData });
       setSuccessMessage(`Successfully assigned shift to ${employee.name} for ${selectedDate}`);
       setShowSuccess(true);
-
-      // Reset form
       setSelectedEmployee('');
-      setSelectedDate(new Date().toISOString().slice(0, 10));
-      setStartTime('');
-      setEndTime('');
-      setSelectedLocation('');
-      setSelectedKind('Work');
-      setWorkingHours(0);
-      setDraftShift(null);
-
-      // Reload current week schedule
+      setSelectedDate(toIsoUTC(getUpcomingSaturdayUTC()));
+      setStartTime(''); setEndTime(''); setSelectedLocation(''); setSelectedKind('Work'); setWorkingHours(0); setDraftShift(null);
       loadCurrentWeekSchedule();
-
-      // Hide success message after 5 seconds
       setTimeout(() => setShowSuccess(false), 5000);
-
     } catch (error) {
       console.error('Error assigning shift:', error);
       setError('Failed to assign shift. Please try again.');
     }
   };
 
-  const clearForm = () => {
-    setSelectedEmployee('');
-    setSelectedDate(new Date().toISOString().slice(0, 10));
-    setStartTime('');
-    setEndTime('');
-    setSelectedLocation('');
-    setSelectedKind('Work');
-    setWorkingHours(0);
-    setDraftShift(null);
+  const handleSaveToPreview = (e) => {
+    e.preventDefault();
     setError('');
+    if (!validateForm()) return;
+    const employee = employees.find(e => e.id === Number(selectedEmployee));
+    const location = locations.find(l => l.id === Number(selectedLocation));
+    const newPreviewShift = {
+      id: `preview_${Date.now()}`,
+      date: selectedDate,
+      employee: employee?.name || '',
+      employeeId: employee?.id,
+      startTime,
+      endTime,
+      location: location?.name || '',
+      locationId: location?.id,
+      kind: selectedKind,
+      status: 'draft',
+      isPreview: true
+    };
+    setPreviewShifts(prev => [...prev, newPreviewShift]);
+    setSuccessMessage('Shift added to preview. Open Preview Schedule to submit.');
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
+    // Clear inputs after adding to preview
+    setSelectedEmployee('');
+    setSelectedDate(toIsoUTC(getUpcomingSaturdayUTC()));
+    setStartTime(''); setEndTime(''); setSelectedLocation(''); setSelectedKind('Work');
+    setWorkingHours(0); setDraftShift(null);
   };
 
-  const saveSchedule = () => {
-    // This would typically save the entire week's schedule
-    setSuccessMessage('Weekly schedule saved successfully!');
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 5000);
+  const clearForm = () => {
+    setSelectedEmployee('');
+    setSelectedDate(toIsoUTC(getUpcomingSaturdayUTC()));
+    setStartTime(''); setEndTime(''); setSelectedLocation(''); setSelectedKind('Work');
+    setWorkingHours(0); setDraftShift(null); setError('');
   };
 
   const resetSchedule = () => {
-    // This would typically reset the entire week's schedule
-    loadCurrentWeekSchedule();
-    setSuccessMessage('Weekly schedule reset successfully!');
+    if (!window.confirm('Clear all preview shifts? This will not submit any changes.')) return;
+    setPreviewShifts([]);
+    setSuccessMessage('Preview cleared. No changes were submitted.');
     setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 5000);
+    setTimeout(() => setShowSuccess(false), 3000);
   };
 
   const handleSaveLocation = async (locationData) => {
     try {
-      // Call the backend API to save the location
       const response = await api.post('/locations', locationData);
-      
-      // Add the new location to the local state
       setLocations(prev => [...prev, response.data]);
-      
-      // Show success message
       setSuccessMessage('Location saved successfully!');
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 5000);
-      
     } catch (error) {
       console.error('Error saving location:', error);
       throw new Error('Failed to save location');
     }
   };
 
-  const handleLocationAdded = () => {
-    // Refresh locations if needed
-    loadData();
-  };
+  const handleLocationAdded = () => { loadData(); };
 
   const formatTime = (time) => {
     if (!time) return '';
@@ -270,68 +329,111 @@ export default function AssignShifts() {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
-  const getDayName = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { weekday: 'short' });
+  // Calculate hours for a single shift
+  const getShiftHours = (shift) => {
+    if (!shift.startTime || !shift.endTime) return 0;
+    const start = new Date(`2000-01-01T${shift.startTime}`);
+    const end = new Date(`2000-01-01T${shift.endTime}`);
+    return Math.max(0, (end - start) / (1000 * 60 * 60));
   };
 
-  // Filter shifts for selected employee
+  // Filter shifts for selected employee including local preview
   const getFilteredShifts = () => {
-    if (!selectedEmployee) {
-      return currentWeekShifts;
-    }
-    
+    const all = [...currentWeekShifts, ...previewShifts];
+    if (!selectedEmployee) return all;
     const employee = employees.find(e => e.id === Number(selectedEmployee));
-    if (!employee) return currentWeekShifts;
-    
-    // Filter existing shifts for the selected employee
-    const employeeShifts = currentWeekShifts.filter(shift => 
-      shift.employee === employee.name
-    );
-    
-    // Add draft shift if it exists and matches the selected employee
-    if (draftShift && draftShift.employee === employee.name) {
-      return [...employeeShifts, draftShift];
-    }
-    
-    return employeeShifts;
+    if (!employee) return all;
+    return all.filter(s => s.employee === employee.name);
   };
 
-  // Calculate total hours for filtered shifts
-  const getFilteredTotalHours = () => {
-    const filteredShifts = getFilteredShifts();
-    let total = 0;
-    
-    filteredShifts.forEach(shift => {
-      if (shift.startTime && shift.endTime) {
-        const start = new Date(`2000-01-01T${shift.startTime}`);
-        const end = new Date(`2000-01-01T${shift.endTime}`);
-        const diffMs = end - start;
-        const diffHours = diffMs / (1000 * 60 * 60);
-        total += diffHours;
-      }
-    });
-    
-    return total;
-  };
-
-  // Calculate hours by location for filtered shifts
+  // Calculate totals
+  const getFilteredTotalHours = () => getFilteredShifts().reduce((sum, s) => sum + getShiftHours(s), 0);
   const getFilteredHoursByLocation = () => {
-    const filteredShifts = getFilteredShifts();
-    const locationHours = {};
-    
-    filteredShifts.forEach(shift => {
-      if (shift.startTime && shift.endTime && shift.location) {
-        const start = new Date(`2000-01-01T${shift.startTime}`);
-        const end = new Date(`2000-01-01T${shift.endTime}`);
-        const diffMs = end - start;
-        const diffHours = diffMs / (1000 * 60 * 60);
-        
-        locationHours[shift.location] = (locationHours[shift.location] || 0) + diffHours;
-      }
+    const map = {};
+    getFilteredShifts().forEach(s => {
+      if (s.location) { map[s.location] = (map[s.location] || 0) + getShiftHours(s); }
     });
-    
-    return locationHours;
+    return map;
+  };
+
+  // Group shifts by date (Saturday -> Friday)
+  const getWeekShiftsGrouped = () => {
+    const days = getWeekDatesUTC(selectedDate);
+    const byDate = {}; days.forEach(d => byDate[d.date] = []);
+    const filtered = getFilteredShifts();
+    filtered.forEach(s => { if (byDate[s.date]) byDate[s.date].push(s); });
+    Object.values(byDate).forEach(arr => arr.sort((a,b) => (a.startTime||'').localeCompare(b.startTime||'')));
+    return { days, byDate };
+  };
+
+  // Inline edit for preview shifts
+  const beginEditShift = (shift) => { setEditingShiftId(shift.id); setEditFields({ startTime: shift.startTime, endTime: shift.endTime, locationId: shift.locationId, kind: shift.kind }); };
+  const cancelEditShift = () => setEditingShiftId(null);
+  const saveEditShift = () => {
+    setPreviewShifts(prev => prev.map(s => s.id === editingShiftId ? { ...s, startTime: editFields.startTime, endTime: editFields.endTime, locationId: Number(editFields.locationId), location: locations.find(l => l.id === Number(editFields.locationId))?.name || s.location, kind: editFields.kind } : s));
+    setEditingShiftId(null);
+  };
+  const removePreviewShift = (id) => setPreviewShifts(prev => prev.filter(s => s.id !== id));
+
+  const handleDeleteLocation = async (id) => {
+    try {
+      if (!window.confirm('Are you sure you want to delete this location?')) return;
+      
+      const response = await api.delete(`/locations/${id}`);
+      
+      if (response.data.hadReferences) {
+        // Show additional confirmation if location had references
+        const confirmed = window.confirm(
+          'This location is linked to other records. Deleting it will also remove those records. Are you sure you want to proceed?'
+        );
+        
+        if (!confirmed) {
+          // If user cancels, we need to refresh to restore the location
+          await loadData();
+          return;
+        }
+      }
+      
+      // Remove from local state
+      setLocations(prev => prev.filter(l => l.id !== id));
+      
+      // Show success message
+      setSuccessMessage(response.data.note || 'Location deleted successfully!');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+      
+    } catch (err) {
+      console.error('Delete location failed', err);
+      const errorMsg = err.response?.data?.error || 'Failed to delete location';
+      alert(`Error: ${errorMsg}`);
+    }
+  };
+
+  const submitPreviewShifts = async () => {
+    try {
+      const shiftsToSubmit = [...previewShifts];
+      for (const preview of shiftsToSubmit) {
+        await api.post('/employee-shifts/assign', { employeeId: preview.employeeId, employeeName: preview.employee, shiftData: { date: preview.date, startTime: preview.startTime, endTime: preview.endTime, locationId: preview.locationId, locationName: preview.location, kind: preview.kind } });
+      }
+      setCurrentWeekShifts(prev => [...prev, ...shiftsToSubmit.map(s => ({ ...s, status: 'confirmed' }))]);
+      setPreviewShifts([]); setIsPreviewModalOpen(false);
+      setSuccessMessage('Shifts submitted successfully.'); setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 4000);
+    } catch (err) { console.error('Error submitting shifts', err); setError('Failed to submit shifts.'); }
+  };
+
+  // Totals for preview-only (exclude existing confirmed shifts)
+  const getPreviewFilteredShifts = () => {
+    if (!selectedEmployee) return previewShifts;
+    const employee = employees.find(e => e.id === Number(selectedEmployee));
+    if (!employee) return previewShifts;
+    return previewShifts.filter(s => s.employee === employee.name);
+  };
+  const getPreviewTotalHours = () => getPreviewFilteredShifts().reduce((sum, s) => sum + getShiftHours(s), 0);
+  const getPreviewHoursByLocation = () => {
+    const map = {};
+    getPreviewFilteredShifts().forEach(s => { if (s.location) map[s.location] = (map[s.location] || 0) + getShiftHours(s); });
+    return map;
   };
 
   if (loading) {
@@ -342,19 +444,15 @@ export default function AssignShifts() {
     );
   }
 
+  const { days, byDate } = getWeekShiftsGrouped();
+  const weekNumber = getWeekNumberUTC(selectedDate);
+  const weekStart = days[0]?.dateObj; const weekEnd = days[6]?.dateObj;
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Assign Shift</h1>
-        <button
-          type="button"
-          onClick={() => setIsLocationModalOpen(true)}
-          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-        >
-          <PlusIcon className="h-4 w-4 mr-2" />
-          Add Location
-        </button>
       </div>
 
       {/* Success Message */}
@@ -381,145 +479,80 @@ export default function AssignShifts() {
       )}
 
       {/* Assign Shift Form */}
-      <Card>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Assign Shift</h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Employee Selection */}
+      <Card title="Assign Shift">
+        <form onSubmit={handleSaveToPreview} className="space-y-6">
+          {/* Row 1 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <UserIcon className="h-5 w-5 inline mr-2" />
-                Employee
-              </label>
-              <select
-                value={selectedEmployee}
-                onChange={(e) => setSelectedEmployee(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                required
-              >
-                <option value="">Choose an employee...</option>
-                {employees.map(employee => (
-                  <option key={employee.id} value={employee.id}>
-                    {employee.email} - {employee.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Date Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <CalendarIcon className="h-5 w-5 inline mr-2" />
-                Date
-              </label>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-            </div>
-
-            {/* Working Hours Display */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <ClockIcon className="h-5 w-5 inline mr-2" />
-                Working Hours
-              </label>
-              <div className="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-md text-gray-700">
-                {formatWorkingHours(workingHours)}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Employee</label>
+              <div className="relative">
+                <UserIcon className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <select value={selectedEmployee} onChange={(e) => setSelectedEmployee(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required>
+                  <option value="">Choose an employee...</option>
+                  {employees.map(employee => (<option key={employee.id} value={employee.id}>{employee.email} - {employee.name}</option>))}
+                </select>
               </div>
             </div>
-
-            {/* Start Time */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <ClockIcon className="h-5 w-5 inline mr-2" />
-                Start Time
-              </label>
-              <input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+              <div className="relative">
+                <CalendarIcon className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required />
+              </div>
             </div>
-
-            {/* End Time */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <ClockIcon className="h-5 w-5 inline mr-2" />
-                End Time
-              </label>
-              <input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Working Hours</label>
+              <div className="w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-md text-gray-700">{formatWorkingHours(workingHours)}</div>
             </div>
+          </div>
 
-            {/* Location */}
+          {/* Row 2 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <MapPinIcon className="h-5 w-5 inline mr-2" />
-                Location
-              </label>
-              <select
-                value={selectedLocation}
-                onChange={(e) => setSelectedLocation(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                required
-              >
-                <option value="">Select location...</option>
-                {locations.map(location => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+              <div className="relative">
+                <ClockIcon className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required />
+              </div>
             </div>
-
-            {/* Kind */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Kind
-              </label>
-              <select
-                value={selectedKind}
-                onChange={(e) => setSelectedKind(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                required
-              >
-                {shiftKinds.map(kind => (
-                  <option key={kind} value={kind}>
-                    {kind}
-                  </option>
-                ))}
+              <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+              <div className="relative">
+                <ClockIcon className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+              <div className="flex gap-2">
+                <select value={selectedLocation} onChange={(e) => setSelectedLocation(e.target.value)} className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required>
+                  <option value="">Select location...</option>
+                  {locations.map(location => (<option key={location.id} value={location.id}>{location.name}</option>))}
+                </select>
+                <button type="button" onClick={() => setIsLocationModalOpen(true)} className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                  <PlusIcon className="h-4 w-4 mr-1" /> Add
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 3 */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Kind</label>
+              <select value={selectedKind} onChange={(e) => setSelectedKind(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required>
+                {shiftKinds.map(kind => (<option key={kind} value={kind}>{kind}</option>))}
               </select>
             </div>
           </div>
 
           {/* Form Buttons */}
-          <div className="flex justify-end space-x-3 pt-4">
-            <button
-              type="button"
-              onClick={clearForm}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <XMarkIcon className="h-4 w-4 mr-2" />
-              Clear
+          <div className="flex items-center space-x-3 pt-2">
+            <button type="submit" className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+              <CheckIcon className="h-4 w-4 mr-2" /> Save Shift
             </button>
-            <button
-              type="submit"
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <CheckIcon className="h-4 w-4 mr-2" />
-              Save Shift
+            <button type="button" onClick={clearForm} className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+              <XMarkIcon className="h-4 w-4 mr-2" /> Clear
             </button>
           </div>
         </form>
@@ -527,116 +560,186 @@ export default function AssignShifts() {
 
       {/* Schedule Preview - Current Week Only */}
       <Card>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Schedule Preview - Current Week Only
-          {selectedEmployee && (
-            <span className="text-sm font-normal text-gray-600 ml-2">
-              (Filtered for {employees.find(e => e.id === Number(selectedEmployee))?.name})
-            </span>
-          )}
-        </h2>
-        
-        {/* Summary Tabs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          {/* Live Weekly Summary */}
-          <div className="bg-blue-50 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-blue-900 mb-2">Live Weekly Summary</h3>
-            <div className="text-2xl font-bold text-blue-900">
-              {formatWorkingHours(getFilteredTotalHours())}
-            </div>
-            <div className="text-sm text-blue-700">Total working hours this week</div>
-          </div>
-
-          {/* Hours by Location */}
-          <div className="bg-green-50 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-green-900 mb-2">Hours by Location</h3>
-            <div className="space-y-2">
-              {Object.entries(getFilteredHoursByLocation()).map(([location, hours]) => (
-                <div key={location} className="flex justify-between text-sm">
-                  <span className="text-green-700">{location}</span>
-                  <span className="font-medium text-green-900">{formatWorkingHours(hours)}</span>
-                </div>
-              ))}
-              {Object.keys(getFilteredHoursByLocation()).length === 0 && (
-                <div className="text-sm text-green-600">No shifts assigned</div>
-              )}
-            </div>
-          </div>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Schedule Preview - Current Week Only</h2>
         </div>
+        <p className="text-sm text-gray-600 mb-1">Employee: {selectedEmployee ? (employees.find(e => e.id === Number(selectedEmployee))?.name || '') : 'All employees'}</p>
+        <p className="text-xs text-gray-500 mb-4">Week {weekNumber} – {formatDisplayDate(weekStart)} to {formatDisplayDate(weekEnd)}</p>
 
-        {/* Week View */}
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
-          <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
-            <h3 className="text-sm font-medium text-gray-900">Week View</h3>
-          </div>
-          <div className="divide-y divide-gray-200">
-            {getFilteredShifts().map((shift) => (
-              <div key={shift.id} className="px-4 py-3 flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="text-sm font-medium text-gray-900 w-20">
-                    {getDayName(shift.date)}
-                  </div>
-                  <div className="text-sm text-gray-600 w-32">
-                    {shift.employee}
-                  </div>
-                  <div className="text-sm text-gray-600 w-24">
-                    {formatTime(shift.startTime)} - {formatTime(shift.endTime)}
-                  </div>
-                  <div className="text-sm text-gray-600 w-32">
-                    {shift.location}
-                  </div>
-                  <div className="text-sm text-gray-600 w-20">
-                    {shift.kind}
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  {shift.status === 'draft' && (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                      Draft
-                    </span>
-                  )}
-                  {shift.status === 'confirmed' && (
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                      Confirmed
-                    </span>
-                  )}
+        {/* Day cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {days.map(({ date, dateObj }) => {
+            const dayShifts = byDate[date] || [];
+            const totalHours = dayShifts.reduce((sum, s) => sum + getShiftHours(s), 0);
+            const hoursColor = totalHours < 8 ? 'bg-green-100 text-green-800' : totalHours <= 10 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
+            return (
+              <div key={date} className="relative bg-white border border-gray-200 rounded-md p-3">
+                <span className={`absolute top-2 left-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${hoursColor}`}>{formatWorkingHours(totalHours)}</span>
+                <div className="text-sm font-semibold text-gray-900 pl-20">{formatDisplayDay(dateObj)} – {dateObj.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: 'UTC' })}</div>
+                <div className="mt-3 space-y-2">
+                  {dayShifts.length === 0 && (<div className="text-xs text-gray-400">No shifts</div>)}
+                  {dayShifts.map((shift, idx) => (
+                    <div key={shift.id} className={`${idx % 2 === 0 ? 'bg-gray-50' : 'bg-gray-100'} border border-gray-200 rounded p-2 flex items-center justify-between`}>
+                      {editingShiftId === shift.id ? (
+                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-4 gap-2 items-center">
+                          <input type="time" value={editFields.startTime} onChange={e => setEditFields(f => ({ ...f, startTime: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded" />
+                          <input type="time" value={editFields.endTime} onChange={e => setEditFields(f => ({ ...f, endTime: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded" />
+                          <select value={editFields.locationId || ''} onChange={e => setEditFields(f => ({ ...f, locationId: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded">
+                            <option value="">Select location...</option>
+                            {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                          </select>
+                          <select value={editFields.kind} onChange={e => setEditFields(f => ({ ...f, kind: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded">
+                            {shiftKinds.map(k => <option key={k} value={k}>{k}</option>)}
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="flex-1">
+                          <div className="text-sm text-gray-800">{formatTime(shift.startTime)} - {formatTime(shift.endTime)}</div>
+                          <div className="text-xs text-gray-500">{shift.location} {shift.kind !== 'Work' && (<span className="ml-1 inline-block px-1 rounded bg-gray-200 text-gray-700">{shift.kind}</span>)}</div>
+                        </div>
+                      )}
+                      <div className="ml-2 flex items-center space-x-2">
+                        {shift.isPreview && editingShiftId !== shift.id && (
+                          <button onClick={() => beginEditShift(shift)} className="p-1 rounded hover:bg-gray-200" title="Edit">
+                            <PencilSquareIcon className="h-4 w-4 text-gray-600" />
+                          </button>
+                        )}
+                        {editingShiftId === shift.id && (
+                          <>
+                            <button onClick={saveEditShift} className="p-1 rounded hover:bg-gray-200" title="Save">
+                              <CheckIcon className="h-4 w-4 text-green-600" />
+                            </button>
+                            <button onClick={cancelEditShift} className="p-1 rounded hover:bg-gray-200" title="Cancel">
+                              <XMarkIcon className="h-4 w-4 text-gray-600" />
+                            </button>
+                          </>
+                        )}
+                        {shift.isPreview && (
+                          <button onClick={() => removePreviewShift(shift.id)} className="p-1 rounded hover:bg-gray-200" title="Delete">
+                            <TrashIcon className="h-4 w-4 text-red-600" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-            {getFilteredShifts().length === 0 && (
-              <div className="px-4 py-8 text-center text-gray-500">
-                {selectedEmployee ? 'No shifts assigned to this employee this week.' : 'No shifts assigned this week.'}
-              </div>
-            )}
-          </div>
+            );
+          })}
         </div>
 
         {/* Schedule Actions */}
         <div className="flex justify-end space-x-3 pt-6">
-          <button
-            type="button"
-            onClick={resetSchedule}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            Reset Schedule
-          </button>
-          <button
-            type="button"
-            onClick={saveSchedule}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            Save Schedule
-          </button>
+          <button type="button" onClick={() => setIsPreviewModalOpen(true)} className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">Preview Schedule</button>
+          <button type="button" onClick={resetSchedule} className="inline-flex items-center px-4 py-2 border border-red-500 text-sm font-medium rounded-md text-red-600 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Reset Schedule</button>
+        </div>
+      </Card>
+
+      {/* Locations List Section */}
+      <Card title="Locations">
+        <div className="mb-3 flex items-center gap-2">
+          <input value={locationQuery} onChange={(e) => setLocationQuery(e.target.value)} placeholder="Search locations..." className="w-full px-3 py-2 border border-gray-300 rounded-md" />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 bg-gray-50">
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Location Name</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Coordinates</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-700">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {locations.filter(l => l.name.toLowerCase().includes(locationQuery.toLowerCase())).map(loc => (
+                <tr key={loc.id} className="border-b border-gray-100">
+                  <td className="py-3 px-4">{loc.name}</td>
+                  <td className="py-3 px-4">
+                    {(loc.latitude != null && loc.longitude != null) ? (
+                      <a href={`https://maps.google.com/?q=${loc.latitude},${loc.longitude}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-600 hover:underline">
+                        <MapPinIcon className="h-4 w-4" /> {loc.latitude}, {loc.longitude}
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">No Coordinates</span>
+                    )}
+                  </td>
+                  <td className="py-3 px-4">
+                    <button onClick={() => handleDeleteLocation(loc.id)} className="text-red-600 hover:text-red-700">Delete</button>
+                  </td>
+                </tr>
+              ))}
+              {locations.length === 0 && (
+                <tr><td colSpan="3" className="py-6 text-center text-gray-500">No locations yet.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </Card>
 
       {/* Location Modal */}
-      <LocationModal
-        isOpen={isLocationModalOpen}
-        onClose={() => setIsLocationModalOpen(false)}
-        onSave={handleSaveLocation}
-        onLocationAdded={handleLocationAdded}
-      />
+      <LocationModal isOpen={isLocationModalOpen} onClose={() => setIsLocationModalOpen(false)} onSave={handleSaveLocation} onLocationAdded={handleLocationAdded} />
+
+      {/* Preview Schedule Modal */}
+      {isPreviewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setIsPreviewModalOpen(false)}></div>
+          <div className="relative bg-white w-full max-w-4xl mx-4 rounded-md shadow-lg">
+            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900">Preview Schedule</h3>
+              <button onClick={() => setIsPreviewModalOpen(false)} className="p-1 rounded hover:bg-gray-100"><XMarkIcon className="h-5 w-5 text-gray-600" /></button>
+            </div>
+            <div className="p-4 space-y-6">
+              {/* Summary */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                  <div className="text-sm font-medium text-blue-900 mb-1">Live Weekly Summary</div>
+                  <div className="text-2xl font-bold text-blue-900">{formatWorkingHours(getPreviewTotalHours())}</div>
+                  <div className="text-sm text-blue-700">Total working hours this week (preview only)</div>
+                </div>
+                <div className="bg-green-50 border border-green-100 rounded-lg p-4">
+                  <div className="text-sm font-medium text-green-900 mb-2">Hours by Location</div>
+                  <div className="space-y-1">
+                    {Object.entries(getPreviewHoursByLocation()).map(([loc, hrs]) => (
+                      <div key={loc} className="flex justify-between text-sm"><span className="text-green-700">{loc}</span><span className="font-medium text-green-900">{formatWorkingHours(hrs)}</span></div>
+                    ))}
+                    {Object.keys(getPreviewHoursByLocation()).length === 0 && (<div className="text-sm text-green-700">No locations assigned yet</div>)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="border border-gray-200 rounded-md overflow-hidden">
+                <div className="bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700">Week Overview</div>
+                <div className="divide-y divide-gray-200">
+                  {getWeekDatesUTC(selectedDate).map(({ date, dateObj }) => {
+                    const dayShifts = (byDate[date] || []).slice().sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
+                    return (
+                      <div key={date} className="px-4 py-3">
+                        <div className="text-sm font-medium text-gray-900 mb-1">{dateObj.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' })}</div>
+                        {dayShifts.length === 0 ? (<div className="text-xs text-gray-500">No shifts</div>) : (
+                          <div className="space-y-1">
+                            {dayShifts.map(s => (
+                              <div key={s.id} className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                                <div className="text-gray-700">{formatTime(s.startTime)} → {formatTime(s.endTime)}</div>
+                                <div className="text-gray-600">{s.location}</div>
+                                <div className="text-gray-500">{s.kind}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <button type="button" onClick={submitPreviewShifts} className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">Submit Shift</button>
+                <button type="button" onClick={() => setIsPreviewModalOpen(false)} className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

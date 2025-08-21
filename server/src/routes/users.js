@@ -73,7 +73,70 @@ router.get('/:id', requireRole('Viewer', 'Manager'), (req, res) => {
   const userId = Number(req.params.id);
   const details = db.getUserDetails(userId);
   if (!details) return res.status(404).json({ error: 'Not found' });
-  res.json(details);
+  
+  // Get comprehensive details including shifts and tasks
+  const comprehensiveDetails = db.getUserProfile(userId);
+  res.json(comprehensiveDetails);
+});
+
+// Comprehensive employee details with shifts, tasks, and hours (Viewer and Manager)
+router.get('/:id/comprehensive', requireRole('Viewer', 'Manager'), (req, res) => {
+  const userId = Number(req.params.id);
+  const details = db.getUserDetails(userId);
+  if (!details) return res.status(404).json({ error: 'Not found' });
+  
+  try {
+    // Get comprehensive details including shifts, tasks, and calculated hours
+    const comprehensiveDetails = db.getUserProfile(userId);
+    
+    // Calculate current month hours
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    
+    const monthlyShifts = comprehensiveDetails.shifts.filter(shift => {
+      if (!shift.check_in_time) return false;
+      const shiftDate = new Date(shift.check_in_time);
+      return shiftDate.getMonth() === currentMonth && shiftDate.getFullYear() === currentYear;
+    });
+    
+    const totalHoursScheduled = monthlyShifts.length * 8; // Assuming 8 hours per shift
+    const totalHoursWorked = monthlyShifts.reduce((total, shift) => {
+      if (shift.check_in_time && shift.check_out_time) {
+        const checkIn = new Date(shift.check_in_time);
+        const checkOut = new Date(shift.check_out_time);
+        const hours = (checkOut - checkIn) / (1000 * 60 * 60);
+        return total + hours;
+      }
+      return total;
+    }, 0);
+    
+    // Get current status
+    const currentShift = db.getOpenShiftForUser(userId);
+    const currentStatus = currentShift ? 'In' : 'Out';
+    const currentLocation = currentShift?.check_in_location_name || 'N/A';
+    const lastCheckIn = currentShift?.check_in_time || null;
+    
+    // Get assigned shifts (from employee-shifts table) for the Assigned Shifts section
+    const assignedShifts = db.getEmployeeShifts(userId);
+    console.log('Assigned shifts for user', userId, ':', assignedShifts);
+    
+    const result = {
+      ...comprehensiveDetails,
+      currentStatus,
+      currentLocation,
+      lastCheckIn,
+      totalHoursScheduled: Math.round(totalHoursScheduled * 100) / 100,
+      totalHoursWorked: Math.round(totalHoursWorked * 100) / 100,
+      monthlyShifts,
+      assignedShifts // This will populate the Assigned Shifts section
+    };
+    
+    console.log('Final result assignedShifts:', result.assignedShifts);
+    res.json(result);
+  } catch (error) {
+    console.error('Error getting comprehensive employee details:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 export default router;

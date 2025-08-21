@@ -7,17 +7,23 @@ const statuses = ['Assigned', 'In Progress', 'Done'];
 export default function Tasks() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const refresh = async () => {
-    const { data } = await api.get('/auth/me');
-    setTasks(data?.tasks || []);
-    setLoading(false);
+    try {
+      setLoading(true);
+      const { data } = await api.get('/auth/me');
+      const list = Array.isArray(data?.tasks) ? data.tasks : [];
+      setTasks(list);
+    } catch (e) {
+      setError('Failed to load tasks');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, 3000);
-    return () => clearInterval(id);
   }, []);
 
   const updateStatus = async (taskId, status) => {
@@ -26,6 +32,7 @@ export default function Tasks() {
   };
 
   if (loading) return <div>Loading…</div>;
+  if (error) return <div className="text-red-600">{error}</div>;
 
   return (
     <Card title="My Tasks">
@@ -40,11 +47,11 @@ export default function Tasks() {
           </thead>
           <tbody>
             {tasks.map((t) => (
-              <tr key={t.task_id} className="border-b last:border-0">
+              <tr key={t.id} className="border-b last:border-0">
                 <td className="py-2">{t.name || t.description}</td>
-                <td>{t.due_date ? new Date(t.due_date).toLocaleDateString() : '—'}</td>
+                <td>{t.dueDate ? new Date(t.dueDate).toLocaleDateString() : (t.due_date ? new Date(t.due_date).toLocaleDateString() : '—')}</td>
                 <td>
-                  <select value={t.status} onChange={(e) => updateStatus(t.task_id, e.target.value)} className="border rounded px-2 py-1">
+                  <select value={t.status} onChange={(e) => updateStatus(t.id || t.task_id, e.target.value)} className="border rounded px-2 py-1">
                     {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </td>

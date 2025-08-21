@@ -78,20 +78,37 @@ router.put('/:id', requireRole('Manager'), (req, res) => {
 });
 
 // Manager deletes a shift
-router.delete('/:id', requireRole('Manager'), (req, res) => {
+router.delete('/:employeeId/:shiftId', requireRole('Manager'), (req, res) => {
+  const employeeId = Number(req.params.employeeId);
+  const shiftId = Number(req.params.shiftId);
+  
+  console.log('Delete request received:', { employeeId, shiftId, user: req.user.id });
+  
   try {
-    const { employeeId } = req.body;
-    const shiftId = Number(req.params.id);
+    // Check if the shift exists before deleting
+    const shifts = db.getEmployeeShifts(employeeId);
+    console.log('Found shifts for employee:', shifts.length);
     
-    if (!employeeId) {
-      return res.status(400).json({ error: 'Missing employee ID' });
+    const shiftExists = shifts.find(s => s.id === shiftId);
+    console.log('Shift exists check:', { shiftId, found: !!shiftExists });
+    
+    if (!shiftExists) {
+      console.log('Shift not found, returning 404');
+      return res.status(404).json({ error: 'Shift not found' });
     }
     
-    db.deleteEmployeeShift(employeeId, shiftId);
-    res.status(204).end();
+    // Delete the shift
+    const deletedShift = db.deleteEmployeeShift(employeeId, shiftId);
+    console.log('Delete result:', deletedShift);
+    
+    // Emit to the employee's room for real-time update
+    const io = req.app.get('io');
+    io.to(`user-${employeeId}`).emit('assigned-shift-deleted', { id: shiftId });
+    
+    res.json({ message: 'Shift deleted successfully', deletedShiftId: shiftId, deletedShift });
   } catch (error) {
-    console.error('Error deleting shift:', error);
-    res.status(500).json({ error: 'Failed to delete shift' });
+    console.error('Error deleting employee shift:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

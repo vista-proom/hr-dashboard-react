@@ -292,6 +292,49 @@ export const db = {
     return this.getUserById(id);
   },
 
+  updateUserProfile(id, fields) {
+    const current = this.getUserById(id);
+    if (!current) return null;
+    const updated = { ...current, ...fields };
+    const now = new Date().toISOString();
+    
+    const updateFields = [];
+    const updateValues = [];
+    
+    if (fields.name !== undefined) {
+      updateFields.push('name = ?');
+      updateValues.push(fields.name);
+    }
+    if (fields.profile_url !== undefined) {
+      updateFields.push('profile_url = ?');
+      updateValues.push(fields.profile_url);
+    }
+    if (fields.linkedin_url !== undefined) {
+      updateFields.push('linkedin_url = ?');
+      updateValues.push(fields.linkedin_url);
+    }
+    if (fields.whatsapp !== undefined) {
+      updateFields.push('whatsapp = ?');
+      updateValues.push(fields.whatsapp);
+    }
+    
+    if (updateFields.length === 0) return current;
+    
+    updateFields.push('updated_at = ?');
+    updateValues.push(now);
+    updateValues.push(id);
+    
+    this.database.prepare(`
+      UPDATE users SET ${updateFields.join(', ')} WHERE id = ?
+    `).run(...updateValues);
+    
+    return this.getUserById(id);
+  },
+
+  changeUserPassword(id, passwordHash) {
+    this.database.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
+  },
+
   deleteUser(id) {
     this.database.prepare('DELETE FROM users WHERE id = ?').run(id);
   },
@@ -375,6 +418,22 @@ export const db = {
     this.database.prepare('DELETE FROM tasks WHERE id = ?').run(id);
   },
 
+  getTask(id) {
+    const row = this.database.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    return row ? {
+      id: row.id,
+      user_id: row.user_id,
+      name: row.name,
+      description: row.description,
+      assigned_by: row.assigned_by,
+      due_date: row.due_date,
+      status: row.status,
+      created_at: row.created_at,
+      last_status_modified_at: row.last_status_modified_at,
+      modified_by: row.modified_by
+    } : null;
+  },
+
   // Required Hours
   getRequiredHours(location) {
     return this.database.prepare('SELECT * FROM required_hours WHERE location = ?').get(location);
@@ -448,6 +507,14 @@ export const db = {
     return `${displayHours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} ${ampm}`;
   },
 
+  getShiftById(shiftId) {
+    return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(shiftId);
+  },
+
+  deleteShift(shiftId) {
+    this.database.prepare('DELETE FROM shifts WHERE id = ?').run(shiftId);
+  },
+
   // Location History (legacy)
   insertLocationLog(userId, { timestamp, latitude, longitude }) {
     const r = this.database
@@ -497,27 +564,49 @@ export const db = {
 
   getEmployeeShifts(employeeId) {
     const tableName = `employee_shifts_${employeeId}`;
+    console.log('Getting shifts for table:', tableName);
     
     // Check if table exists
     const tableExists = this.database.prepare(`
       SELECT name FROM sqlite_master WHERE type='table' AND name=?
     `).get(tableName);
     
+    console.log('Table exists check:', { tableName, exists: !!tableExists });
+    
     if (!tableExists) {
+      console.log('Table does not exist, returning empty array');
       return [];
     }
     
-    return this.database.prepare(`
-      SELECT s.*, l.name as location_name, l.latitude, l.longitude
-      FROM ${tableName} s 
-      LEFT JOIN locations l ON s.location_id = l.id 
-      ORDER BY s.date ASC, s.start_time ASC
-    `).all();
+    try {
+      const shifts = this.database.prepare(`
+        SELECT s.*, l.name as location_name, l.latitude, l.longitude
+        FROM ${tableName} s 
+        LEFT JOIN locations l ON s.location_id = l.id 
+        ORDER BY s.date ASC, s.start_time ASC
+      `).all();
+      
+      console.log('Retrieved shifts:', shifts);
+      return shifts;
+    } catch (error) {
+      console.error('Error getting employee shifts:', error);
+      return [];
+    }
   },
 
   deleteEmployeeShift(employeeId, shiftId) {
     const tableName = `employee_shifts_${employeeId}`;
-    this.database.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(shiftId);
+    
+    // Get the shift before deleting it
+    const shift = this.database.prepare(`SELECT * FROM ${tableName} WHERE id = ?`).get(shiftId);
+    
+    if (shift) {
+      // Delete the shift
+      this.database.prepare(`DELETE FROM ${tableName} WHERE id = ?`).run(shiftId);
+      return shift;
+    }
+    
+    return null;
   },
 
   updateEmployeeShift(employeeId, shiftId, shiftData) {
@@ -563,8 +652,57 @@ export const db = {
     const location = this.database.prepare('SELECT * FROM locations WHERE id = ?').get(locationId);
     if (!location) return null;
     
-    this.database.prepare('DELETE FROM locations WHERE id = ?').run(locationId);
-    return location;
+    try {
+      // First, check if this location is referenced anywhere
+      const hasReferences = this.checkLocationReferences(locationId);
+      
+      if (hasReferences) {
+        // Delete all references first
+        this.deleteLocationReferences(locationId);
+      }
+      
+      // Now delete the location
+      this.database.prepare('DELETE FROM locations WHERE id = ?').run(locationId);
+      return location;
+    } catch (error) {
+      console.error('Error deleting location:', error);
+      return null;
+    }
+  },
+
+  checkLocationReferences(locationId) {
+    // Check if location is referenced in shifts table
+    const shiftsRef = this.database.prepare('SELECT COUNT(*) as count FROM shifts WHERE check_in_location_name = (SELECT name FROM locations WHERE id = ?) OR check_out_location_name = (SELECT name FROM locations WHERE id = ?)').get(locationId, locationId);
+    
+    // Check if location is referenced in any employee_shifts tables
+    const tables = this.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'employee_shifts_%'").all();
+    let hasEmployeeShiftsRef = false;
+    
+    for (const table of tables) {
+      const ref = this.database.prepare(`SELECT COUNT(*) as count FROM ${table.name} WHERE location_id = ?`).get(locationId);
+      if (ref.count > 0) {
+        hasEmployeeShiftsRef = true;
+        break;
+      }
+    }
+    
+    return shiftsRef.count > 0 || hasEmployeeShiftsRef;
+  },
+
+  deleteLocationReferences(locationId) {
+    const locationName = this.database.prepare('SELECT name FROM locations WHERE id = ?').get(locationId)?.name;
+    if (!locationName) return;
+    
+    // Delete references in shifts table
+    this.database.prepare('UPDATE shifts SET check_in_location_name = NULL WHERE check_in_location_name = ?').run(locationName);
+    this.database.prepare('UPDATE shifts SET check_out_location_name = NULL WHERE check_out_location_name = ?').run(locationName);
+    
+    // Delete references in all employee_shifts tables
+    const tables = this.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'employee_shifts_%'").all();
+    
+    for (const table of tables) {
+      this.database.prepare(`UPDATE ${table.name} SET location_id = NULL, location_name = NULL WHERE location_id = ?`).run(locationId);
+    }
   },
 
   findNearbyLocation(latitude, longitude, maxDistance = 0.1) {

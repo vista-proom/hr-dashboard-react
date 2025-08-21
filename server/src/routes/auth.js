@@ -32,7 +32,7 @@ router.post('/login', (req, res) => {
 });
 
 router.get('/me', authenticateJWT, (req, res) => {
-  const details = db.getUserDetails(req.user.id);
+  const details = db.getUserProfile(req.user.id);
   res.json(details);
 });
 
