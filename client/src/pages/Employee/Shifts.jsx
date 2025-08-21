@@ -120,6 +120,9 @@ export default function Shifts() {
       setCheckingIn(true);
       const location = await getCurrentLocation();
       const deviceType = getDeviceType();
+      if (!location) {
+        throw new Error('Location permission denied or unavailable');
+      }
       
       // Find nearby saved location if within 100 meters
       let locationName = null;
@@ -132,10 +135,10 @@ export default function Shifts() {
       
       const checkInData = {
         timestamp: new Date().toISOString(),
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
+        latitude: location.latitude,
+        longitude: location.longitude,
         locationName: locationName,
-        deviceType: deviceType
+        deviceType: deviceType === 'desktop' ? 'PC' : deviceType.charAt(0).toUpperCase() + deviceType.slice(1)
       };
 
       await api.post('/shifts/check-in', checkInData);
@@ -147,7 +150,11 @@ export default function Shifts() {
       
     } catch (error) {
       console.error('Error checking in:', error);
-      setError('Failed to check in. Please try again.');
+      if (error?.code === 1 || /denied/i.test(error?.message || '')) {
+        setError('Location permission denied. Please enable location to check in.');
+      } else {
+        setError('Failed to check in. Please try again.');
+      }
     } finally {
       setCheckingIn(false);
     }
@@ -157,6 +164,10 @@ export default function Shifts() {
     try {
       setCheckingOut(true);
       const location = await getCurrentLocation();
+      const deviceType = getDeviceType();
+      if (!location) {
+        throw new Error('Location permission denied or unavailable');
+      }
       
       // Find nearby saved location if within 100 meters
       let locationName = null;
@@ -169,9 +180,10 @@ export default function Shifts() {
       
       const checkOutData = {
         timestamp: new Date().toISOString(),
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
-        locationName: locationName
+        latitude: location.latitude,
+        longitude: location.longitude,
+        locationName: locationName,
+        deviceType: deviceType === 'desktop' ? 'PC' : deviceType.charAt(0).toUpperCase() + deviceType.slice(1)
       };
 
       await api.post('/shifts/check-out', checkOutData);
@@ -183,7 +195,11 @@ export default function Shifts() {
       
     } catch (error) {
       console.error('Error checking out:', error);
-      setError('Failed to check out. Please try again.');
+      if (error?.code === 1 || /denied/i.test(error?.message || '')) {
+        setError('Location permission denied. Please enable location to check out.');
+      } else {
+        setError('Failed to check out. Please try again.');
+      }
     } finally {
       setCheckingOut(false);
     }

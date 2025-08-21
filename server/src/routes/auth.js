@@ -19,11 +19,23 @@ router.post('/login', (req, res) => {
   const userAgent = req.get('User-Agent');
   const deviceInfo = req.get('User-Agent') ? 'Web Browser' : 'Unknown';
   
+  // Try to capture optional location/device from request (if provided)
+  const { latitude, longitude, deviceType } = req.body || {};
+  let resolvedLocation = null;
+  if (typeof latitude === 'number' && typeof longitude === 'number') {
+    const nearby = db.findNearbyLocation(latitude, longitude);
+    resolvedLocation = nearby ? nearby.name : 'UN-KNOWN';
+  }
+
   db.createLoginRecord({
     userId: user.id,
     ipAddress,
     deviceInfo,
-    userAgent
+    userAgent,
+    latitude: typeof latitude === 'number' ? latitude : null,
+    longitude: typeof longitude === 'number' ? longitude : null,
+    resolvedLocation,
+    deviceType: deviceType || null
   });
 
   const token = signToken(user);
@@ -51,7 +63,18 @@ router.post('/logout', authenticateJWT, (req, res) => {
     // Update the current login session with logout timestamp
     const currentSession = db.getCurrentLoginSession(req.user.id);
     if (currentSession) {
-      db.updateLogoutRecord(currentSession.id);
+      const { latitude, longitude, deviceType } = req.body || {};
+      let resolvedLocation = null;
+      if (typeof latitude === 'number' && typeof longitude === 'number') {
+        const nearby = db.findNearbyLocation(latitude, longitude);
+        resolvedLocation = nearby ? nearby.name : 'UN-KNOWN';
+      }
+      db.updateLogoutRecord(currentSession.id, {
+        latitude: typeof latitude === 'number' ? latitude : null,
+        longitude: typeof longitude === 'number' ? longitude : null,
+        resolvedLocation,
+        deviceType: deviceType || null
+      });
     }
     
     // Clear the JWT cookie

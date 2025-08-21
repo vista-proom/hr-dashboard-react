@@ -77,16 +77,16 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const getCurrentLocation = () => new Promise((resolve) => {
-    if (!navigator.geolocation) return resolve(null);
+  const getCurrentLocation = () => new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('Geolocation is not supported by this browser.'));
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ 
         latitude: pos.coords.latitude, 
         longitude: pos.coords.longitude, 
         timestamp: new Date().toISOString() 
       }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      (err) => reject(err),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   });
 

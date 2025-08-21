@@ -115,6 +115,14 @@ function createSchema(database) {
       ip_address TEXT,
       device_info TEXT,
       user_agent TEXT,
+      check_in_lat REAL,
+      check_in_lng REAL,
+      check_in_resolved_location TEXT,
+      check_out_lat REAL,
+      check_out_lng REAL,
+      check_out_resolved_location TEXT,
+      check_in_device_type TEXT,
+      check_out_device_type TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users (id)
     );
@@ -133,6 +141,15 @@ function createSchema(database) {
   if (!columnExists(database, 'shifts', 'check_in_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_in_location_name TEXT`);
   if (!columnExists(database, 'shifts', 'check_out_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_out_location_name TEXT`);
   if (!columnExists(database, 'shifts', 'device_type')) database.exec(`ALTER TABLE shifts ADD COLUMN device_type TEXT`);
+  if (!columnExists(database, 'shifts', 'check_out_device_type')) database.exec(`ALTER TABLE shifts ADD COLUMN check_out_device_type TEXT`);
+  if (!columnExists(database, 'login_history', 'check_in_lat')) database.exec(`ALTER TABLE login_history ADD COLUMN check_in_lat REAL`);
+  if (!columnExists(database, 'login_history', 'check_in_lng')) database.exec(`ALTER TABLE login_history ADD COLUMN check_in_lng REAL`);
+  if (!columnExists(database, 'login_history', 'check_in_resolved_location')) database.exec(`ALTER TABLE login_history ADD COLUMN check_in_resolved_location TEXT`);
+  if (!columnExists(database, 'login_history', 'check_out_lat')) database.exec(`ALTER TABLE login_history ADD COLUMN check_out_lat REAL`);
+  if (!columnExists(database, 'login_history', 'check_out_lng')) database.exec(`ALTER TABLE login_history ADD COLUMN check_out_lng REAL`);
+  if (!columnExists(database, 'login_history', 'check_out_resolved_location')) database.exec(`ALTER TABLE login_history ADD COLUMN check_out_resolved_location TEXT`);
+  if (!columnExists(database, 'login_history', 'check_in_device_type')) database.exec(`ALTER TABLE login_history ADD COLUMN check_in_device_type TEXT`);
+  if (!columnExists(database, 'login_history', 'check_out_device_type')) database.exec(`ALTER TABLE login_history ADD COLUMN check_out_device_type TEXT`);
 }
 
 function seed(database) {
@@ -841,21 +858,21 @@ export const db = {
   },
 
   // Login History
-  createLoginRecord({ userId, ipAddress, deviceInfo, userAgent }) {
+  createLoginRecord({ userId, ipAddress, deviceInfo, userAgent, latitude, longitude, resolvedLocation, deviceType }) {
     const now = new Date().toISOString();
     const r = this.database.prepare(`
-      INSERT INTO login_history (user_id, login_timestamp, ip_address, device_info, user_agent, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(userId, now, ipAddress || null, deviceInfo || null, userAgent || null, now);
+      INSERT INTO login_history (user_id, login_timestamp, ip_address, device_info, user_agent, check_in_lat, check_in_lng, check_in_resolved_location, check_in_device_type, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(userId, now, ipAddress || null, deviceInfo || null, userAgent || null, latitude ?? null, longitude ?? null, resolvedLocation ?? null, deviceType ?? null, now);
     
     return this.database.prepare('SELECT * FROM login_history WHERE id = ?').get(r.lastInsertRowid);
   },
 
-  updateLogoutRecord(loginRecordId) {
+  updateLogoutRecord(loginRecordId, { latitude, longitude, resolvedLocation, deviceType } = {}) {
     const now = new Date().toISOString();
     this.database.prepare(`
-      UPDATE login_history SET logout_timestamp = ? WHERE id = ?
-    `).run(now, loginRecordId);
+      UPDATE login_history SET logout_timestamp = ?, check_out_lat = ?, check_out_lng = ?, check_out_resolved_location = ?, check_out_device_type = ? WHERE id = ?
+    `).run(now, latitude ?? null, longitude ?? null, resolvedLocation ?? null, deviceType ?? null, loginRecordId);
     
     return this.database.prepare('SELECT * FROM login_history WHERE id = ?').get(loginRecordId);
   },

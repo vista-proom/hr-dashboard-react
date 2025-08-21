@@ -14,10 +14,10 @@ router.get('/', (req, res) => {
 // Employee: Check-in (creates a new shift if none open)
 router.post('/check-in', (req, res) => {
   const userId = req.user.id;
-  const { location, deviceType } = req.body || {};
+  const { location, deviceType, latitude: flat, longitude: flon } = req.body || {};
   const timestamp = new Date().toISOString();
-  const latitude = location && Number.isFinite(location.latitude) ? location.latitude : null;
-  const longitude = location && Number.isFinite(location.longitude) ? location.longitude : null;
+  const latitude = Number.isFinite(flat) ? flat : (location && Number.isFinite(location.latitude) ? location.latitude : null);
+  const longitude = Number.isFinite(flon) ? flon : (location && Number.isFinite(location.longitude) ? location.longitude : null);
 
   const open = db.getOpenShiftForUser(userId);
   if (open) return res.status(400).json({ error: 'Open shift already exists. Please check out first.' });
@@ -33,6 +33,23 @@ router.post('/check-in', (req, res) => {
   
   const shift = db.createShiftCheckIn(userId, { timestamp, latitude, longitude, locationName, deviceType });
 
+  // Also create or update login_history row for a new session
+  try {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('User-Agent');
+    const deviceInfo = userAgent ? 'Web Browser' : 'Unknown';
+    db.createLoginRecord({
+      userId,
+      ipAddress,
+      deviceInfo,
+      userAgent,
+      latitude,
+      longitude,
+      resolvedLocation: locationName || (latitude && longitude ? 'UN-KNOWN' : null),
+      deviceType
+    });
+  } catch {}
+
   // Emit to this user's room for real-time update
   const io = req.app.get('io');
   io.to(`user-${userId}`).emit('shift-created', shift);
@@ -43,10 +60,10 @@ router.post('/check-in', (req, res) => {
 // Employee: Check-out (closes the latest open shift)
 router.post('/check-out', (req, res) => {
   const userId = req.user.id;
-  const { location } = req.body || {};
+  const { location, deviceType, latitude: flat, longitude: flon } = req.body || {};
   const timestamp = new Date().toISOString();
-  const latitude = location && Number.isFinite(location.latitude) ? location.latitude : null;
-  const longitude = location && Number.isFinite(location.longitude) ? location.longitude : null;
+  const latitude = Number.isFinite(flat) ? flat : (location && Number.isFinite(location.latitude) ? location.latitude : null);
+  const longitude = Number.isFinite(flon) ? flon : (location && Number.isFinite(location.longitude) ? location.longitude : null);
 
   // Check if location is near a saved location
   let locationName = null;
@@ -63,6 +80,18 @@ router.post('/check-out', (req, res) => {
   // Emit to this user's room for real-time update
   const io = req.app.get('io');
   io.to(`user-${userId}`).emit('shift-updated', shift);
+
+  try {
+    const currentSession = db.getCurrentLoginSession(userId);
+    if (currentSession) {
+      db.updateLogoutRecord(currentSession.id, {
+        latitude,
+        longitude,
+        resolvedLocation: locationName || (latitude && longitude ? 'UN-KNOWN' : null),
+        deviceType
+      });
+    }
+  } catch {}
 
   res.json(shift);
 });
