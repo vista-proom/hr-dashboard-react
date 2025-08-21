@@ -99,7 +99,7 @@ export default function Shifts() {
       setLoading(true);
       const [assignedRes, loginHistoryRes, locationsRes, sessionsRes] = await Promise.all([
         api.get('/employee-shifts/me'),
-        api.get('/auth/login-history'),
+        api.get('/shifts/login-history'),
         api.get('/locations'),
         api.get('/shifts')
       ]);
@@ -157,6 +157,7 @@ export default function Shifts() {
     try {
       setCheckingOut(true);
       const location = await getCurrentLocation();
+      const deviceType = getDeviceType();
       
       // Find nearby saved location if within 100 meters
       let locationName = null;
@@ -171,7 +172,8 @@ export default function Shifts() {
         timestamp: new Date().toISOString(),
         latitude: location?.latitude || null,
         longitude: location?.longitude || null,
-        locationName: locationName
+        locationName: locationName,
+        deviceType: deviceType
       };
 
       await api.post('/shifts/check-out', checkOutData);
@@ -337,7 +339,7 @@ export default function Shifts() {
     return minDistance <= 0.1 ? nearest : null; // within 100 meters
   };
 
-  const googleMapsLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
+  const googleMapsLink = (lat, lng) => `https://maps.google.com/?q=${lat},${lng}`;
 
   // Group shifts by date for the new table format
   const groupShiftsByDate = (shifts) => {
@@ -425,60 +427,57 @@ export default function Shifts() {
     }, 0);
   }, [todayShifts]);
 
-  // --- Redesigned Login History (using sessions/shifts) ---
-  const formattedSessions = useMemo(() => {
-    return (sessions || []).map(s => {
-      const date = s.check_in_date || s.check_out_date || (s.check_in_time ? new Date(s.check_in_time).toISOString().slice(0,10) : null);
-      const inLoc = s.check_in_lat != null && s.check_in_lng != null ? { lat: s.check_in_lat, lng: s.check_in_lng } : null;
-      const outLoc = s.check_out_lat != null && s.check_out_lng != null ? { lat: s.check_out_lat, lng: s.check_out_lng } : null;
-      const nearIn = inLoc ? nearestSavedLocation(inLoc.lat, inLoc.lng) : null;
-      const nearOut = outLoc ? nearestSavedLocation(outLoc.lat, outLoc.lng) : null;
-      
-      // Format location labels with #SavedLocationName when applicable
-      const inLabel = nearIn ? `#${nearIn.name}` : (inLoc ? 'Open in Maps' : 'Location Unavailable');
-      const outLabel = nearOut ? `#${nearOut.name}` : (outLoc ? 'Open in Maps' : 'Location Unavailable');
-      
+  // --- Login History table data (from /api/shifts/login-history) ---
+  const formatDateDDMMYYYY = (isoDate) => {
+    if (!isoDate) return '';
+    const [y, m, d] = isoDate.split('-');
+    if (!y || !m || !d) return '';
+    return `${d}/${m}/${y}`;
+  };
+
+  const formattedLoginHistory = useMemo(() => {
+    return (loginHistory || []).map((item, idx) => {
+      const inHasCoords = item.checkInLat != null && item.checkInLon != null;
+      const outHasCoords = item.checkOutLat != null && item.checkOutLon != null;
+      const inLabel = item.checkInResolvedLocation ? `#${item.checkInResolvedLocation}` : (inHasCoords ? 'UN-KNOWN' : '');
+      const outLabel = item.checkOutResolvedLocation ? `#${item.checkOutResolvedLocation}` : (outHasCoords ? 'UN-KNOWN' : '');
       return {
-        id: s.id,
-        date: date ? new Date(date).toLocaleDateString('en-GB') : '—',
-        inTime: s.check_in_time_12h || '—',
-        outTime: s.check_out_time_12h || '—',
-        inLink: inLoc ? googleMapsLink(inLoc.lat, inLoc.lng) : null,
-        outLink: outLoc ? googleMapsLink(outLoc.lat, outLoc.lng) : null,
+        id: `${item.date}-${idx}`,
+        date: formatDateDDMMYYYY(item.date),
+        inTime: item.checkInTime || '',
+        outTime: item.checkOutTime || '',
+        inLink: inHasCoords ? googleMapsLink(item.checkInLat, item.checkInLon) : null,
+        outLink: outHasCoords ? googleMapsLink(item.checkOutLat, item.checkOutLon) : null,
         inLabel,
         outLabel,
-        device: s.device_type || 'desktop'
+        deviceDisplay: `${item.checkInDevice || ''} | ${item.checkOutDevice || ''}`
       };
     });
-  }, [sessions, locations]);
+  }, [loginHistory]);
 
   // Responsive table row renderer
   const LoginRow = ({ row, index }) => {
-    const { label, icon } = getDeviceLabel(row.device);
     return (
       <tr className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} border-b border-gray-100`}>
         <td className="py-3 px-4">{row.date}</td>
         <td className="py-3 px-4">{row.inTime}</td>
         <td className="py-3 px-4">
-          {row.inLink ? (
+          {row.inLink && row.inLabel ? (
             <a href={row.inLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.inLabel}</a>
           ) : (
-            <span className="text-gray-400">Location Unavailable</span>
+            <span className="text-gray-400"></span>
           )}
         </td>
         <td className="py-3 px-4">{row.outTime}</td>
         <td className="py-3 px-4">
-          {row.outLink ? (
+          {row.outLink && row.outLabel ? (
             <a href={row.outLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.outLabel}</a>
           ) : (
-            <span className="text-gray-400">Location Unavailable</span>
+            <span className="text-gray-400"></span>
           )}
         </td>
         <td className="py-3 px-4">
-          <div className="flex items-center gap-2 text-gray-700">
-            {icon}
-            <span className="text-sm">{label}</span>
-          </div>
+          <div className="text-gray-700 text-sm">{row.deviceDisplay}</div>
         </td>
       </tr>
     );
@@ -799,12 +798,12 @@ export default function Shifts() {
               </tr>
             </thead>
             <tbody>
-              {formattedSessions.length === 0 ? (
+              {formattedLoginHistory.length === 0 ? (
                 <tr>
                   <td colSpan="6" className="py-8 px-4 text-center text-gray-500 italic">No history available</td>
                 </tr>
               ) : (
-                formattedSessions.map((row, idx) => (
+                formattedLoginHistory.map((row, idx) => (
                   <LoginRow key={row.id} row={row} index={idx} />
                 ))
               )}
@@ -814,32 +813,24 @@ export default function Shifts() {
 
         {/* Mobile cards */}
         <div className="md:hidden space-y-3">
-          {formattedSessions.length === 0 ? (
+          {formattedLoginHistory.length === 0 ? (
             <div className="py-4 text-center text-gray-500 italic">No history available</div>
           ) : (
-            formattedSessions.map((row) => {
-              const { label, icon } = getDeviceLabel(row.device);
+            formattedLoginHistory.map((row) => {
               return (
                 <div key={row.id} className="border rounded-lg p-4 bg-white">
                   <div className="text-sm text-gray-900 font-medium">Date: {row.date}</div>
                   <div className="text-sm text-gray-700 mt-1">
-                    Check-In: {row.inTime} at {row.inLink ? (
-                      <a href={row.inLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.inLabel}</a>
-                    ) : (
-                      <span className="text-gray-400">Location Unavailable</span>
-                    )}
+                    Check-In: {row.inTime} {row.inLink && row.inLabel ? (
+                      <>at <a href={row.inLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.inLabel}</a></>
+                    ) : null}
                   </div>
                   <div className="text-sm text-gray-700 mt-1">
-                    Check-Out: {row.outTime} at {row.outLink ? (
-                      <a href={row.outLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.outLabel}</a>
-                    ) : (
-                      <span className="text-gray-400">Location Unavailable</span>
-                    )}
+                    Check-Out: {row.outTime} {row.outLink && row.outLabel ? (
+                      <>at <a href={row.outLink} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">{row.outLabel}</a></>
+                    ) : null}
                   </div>
-                  <div className="flex items-center gap-2 text-gray-700 mt-2">
-                    {icon}
-                    <span className="text-sm">Device: {label}</span>
-                  </div>
+                  <div className="text-gray-700 mt-2 text-sm">Device: {row.deviceDisplay}</div>
                 </div>
               );
             })

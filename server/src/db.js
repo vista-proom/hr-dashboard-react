@@ -72,6 +72,7 @@ function createSchema(database) {
       check_out_lng REAL,
       check_out_location_name TEXT,
       device_type TEXT,
+      check_out_device_type TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
@@ -133,6 +134,7 @@ function createSchema(database) {
   if (!columnExists(database, 'shifts', 'check_in_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_in_location_name TEXT`);
   if (!columnExists(database, 'shifts', 'check_out_location_name')) database.exec(`ALTER TABLE shifts ADD COLUMN check_out_location_name TEXT`);
   if (!columnExists(database, 'shifts', 'device_type')) database.exec(`ALTER TABLE shifts ADD COLUMN device_type TEXT`);
+  if (!columnExists(database, 'shifts', 'check_out_device_type')) database.exec(`ALTER TABLE shifts ADD COLUMN check_out_device_type TEXT`);
 }
 
 function seed(database) {
@@ -457,14 +459,14 @@ export const db = {
     return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(r.lastInsertRowid);
   },
 
-  checkOutShift(userId, { timestamp, latitude, longitude, locationName }) {
+  checkOutShift(userId, { timestamp, latitude, longitude, locationName, deviceType }) {
     const open = this.getOpenShiftForUser(userId);
     if (!open) return null;
     
     this.database.prepare(`
-      UPDATE shifts SET check_out_time = ?, check_out_lat = ?, check_out_lng = ?, check_out_location_name = ?
+      UPDATE shifts SET check_out_time = ?, check_out_lat = ?, check_out_lng = ?, check_out_location_name = ?, check_out_device_type = ?
       WHERE id = ?
-    `).run(timestamp, latitude ?? null, longitude ?? null, locationName ?? null, open.id);
+    `).run(timestamp, latitude ?? null, longitude ?? null, locationName ?? null, deviceType ?? null, open.id);
     
     return this.database.prepare('SELECT * FROM shifts WHERE id = ?').get(open.id);
   },
@@ -493,7 +495,8 @@ export const db = {
       check_out_lat: shift.check_out_lat,
       check_out_lng: shift.check_out_lng,
       check_out_location_name: shift.check_out_location_name,
-      device_type: shift.device_type
+      device_type: shift.device_type,
+      check_out_device_type: shift.check_out_device_type
     }));
   },
 

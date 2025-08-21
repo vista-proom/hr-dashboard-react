@@ -43,7 +43,7 @@ router.post('/check-in', (req, res) => {
 // Employee: Check-out (closes the latest open shift)
 router.post('/check-out', (req, res) => {
   const userId = req.user.id;
-  const { location } = req.body || {};
+  const { location, deviceType } = req.body || {};
   const timestamp = new Date().toISOString();
   const latitude = location && Number.isFinite(location.latitude) ? location.latitude : null;
   const longitude = location && Number.isFinite(location.longitude) ? location.longitude : null;
@@ -57,7 +57,7 @@ router.post('/check-out', (req, res) => {
     }
   }
 
-  const shift = db.checkOutShift(userId, { timestamp, latitude, longitude, locationName });
+  const shift = db.checkOutShift(userId, { timestamp, latitude, longitude, locationName, deviceType });
   if (!shift) return res.status(400).json({ error: 'No open shift to check out.' });
 
   // Emit to this user's room for real-time update
@@ -112,3 +112,29 @@ router.delete('/:shiftId', requireRole('Manager'), (req, res) => {
 });
 
 export default router;
+
+// New: Login History endpoint with structured response
+router.get('/login-history', (req, res) => {
+  try {
+    const userId = req.user.id;
+    const sessions = db.listShiftsForUserWithLocations(userId);
+    const result = sessions.map(s => ({
+      date: (s.check_in_date || s.check_out_date) || null,
+      checkInTime: s.check_in_time_12h || null,
+      checkInLat: s.check_in_lat ?? null,
+      checkInLon: s.check_in_lng ?? null,
+      checkInDevice: (s.device_type ? (s.device_type.toLowerCase() === 'mobile' ? 'Mobile' : s.device_type.toLowerCase() === 'tablet' ? 'Tablet' : 'PC') : 'PC'),
+      checkOutTime: s.check_out_time_12h || null,
+      checkOutLat: s.check_out_lat ?? null,
+      checkOutLon: s.check_out_lng ?? null,
+      checkOutDevice: (s.check_out_device_type ? (s.check_out_device_type.toLowerCase() === 'mobile' ? 'Mobile' : s.check_out_device_type.toLowerCase() === 'tablet' ? 'Tablet' : 'PC') : null),
+      checkInResolvedLocation: s.check_in_location_name || null,
+      checkOutResolvedLocation: s.check_out_location_name || null
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error('Error building login history:', err);
+    res.status(500).json({ error: 'Failed to fetch login history' });
+  }
+});
