@@ -206,18 +206,32 @@ export default function Shifts() {
 
   const exportScheduleToPDF = () => {
     if (!shifts || shifts.length === 0) {
-      alert('No schedule data available to export.');
+      alert('No assigned shifts available to export.');
       return;
     }
+    
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
     const todayIso = new Date().toISOString().slice(0,10);
     const week = weekNumberFromISO(todayIso);
-    const title = `My Live Schedule - ${user?.name || ''} (Week ${week})`;
-    doc.setFontSize(14);
+    const title = `My Assigned Shifts - ${user?.name || ''} (Week ${week})`;
+    doc.setFontSize(16);
     doc.text(title, 40, 40);
 
     // Group shifts by date for PDF export
     const groupedShifts = groupShiftsByDate(shifts);
+    
+    // Calculate total assigned hours for the week
+    const totalWeekHours = groupedShifts.reduce((weekSum, dayGroup) => {
+      return weekSum + dayGroup.shifts.reduce((daySum, shift) => {
+        const start = new Date(`${dayGroup.date}T${shift.start_time}`);
+        const end = new Date(`${dayGroup.date}T${shift.end_time}`);
+        return daySum + Math.max(0, (end - start) / (1000*60*60));
+      }, 0);
+    }, 0);
+    
+    // Add total hours summary
+    doc.setFontSize(12);
+    doc.text(`Total Assigned Hours This Week: ${totalWeekHours.toFixed(1)}h`, 40, 70);
     
     const rows = groupedShifts.map(dayGroup => {
       const shiftsText = dayGroup.shifts.map(shift => 
@@ -248,7 +262,7 @@ export default function Shifts() {
     });
 
     doc.autoTable({
-      startY: 60,
+      startY: 90,
       head: [['Date', 'Day', 'Shifts', 'Total Hours', 'Locations']],
       body: rows,
       theme: 'grid',
@@ -263,22 +277,37 @@ export default function Shifts() {
       }
     });
 
-    doc.save(`shifts_${(user?.name || 'me').replace(/\s+/g,'_')}_${week}.pdf`);
+    const filename = `assigned_shifts_${(user?.name || 'me').replace(/\s+/g,'_')}_week_${week}.pdf`;
+    doc.save(filename);
   };
 
   const exportLoginHistoryToExcel = () => {
+    if (!loginHistory || loginHistory.length === 0) {
+      alert('No login history data available to export.');
+      return;
+    }
+
     const loginHistoryData = loginHistory.map(login => ({
-      'Login Date & Time': new Date(login.login_timestamp).toLocaleString('en-GB'),
-      'Logout Date & Time': login.logout_timestamp ? new Date(login.logout_timestamp).toLocaleString('en-GB') : '—',
-      'Device Info': login.device_info || '—',
-      'IP Address': login.ip_address || '—',
-      'User Agent': login.user_agent || '—'
+      'Check-in Date': login.date ? new Date(login.date).toLocaleDateString('en-GB') : '—',
+      'Check-in Time': login.checkInTime || '—',
+      'Check-in Location': login.checkInResolvedLocation ? `#${login.checkInResolvedLocation}` : (login.checkInLat && login.checkInLon ? 'UN-KNOWN' : '—'),
+      'Check-out Date': login.date ? new Date(login.date).toLocaleDateString('en-GB') : '—',
+      'Check-out Time': login.checkOutTime || '—',
+      'Check-out Location': login.checkOutResolvedLocation ? `#${login.checkOutResolvedLocation}` : (login.checkOutLat && login.checkOutLon ? 'UN-KNOWN' : '—'),
+      'Device': `${login.checkInDevice || ''} | ${login.checkOutDevice || ''}`.trim()
     }));
 
     const ws = XLSX.utils.json_to_sheet(loginHistoryData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Login History');
-    XLSX.writeFile(wb, `login_history_${user?.name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    
+    // Dynamic filename with date and time
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '-');
+    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '-');
+    const filename = `LoginHistory_${dateStr}_${timeStr}.xlsx`;
+    
+    XLSX.writeFile(wb, filename);
   };
 
   const formatTime12h = (time) => {

@@ -3,6 +3,8 @@ import api from '../../api';
 import Card from '../../components/Card';
 import LocationModal from '../../components/LocationModal';
 import { useAuth } from '../../context/AuthContext';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 import { 
   UserIcon, 
   CalendarIcon, 
@@ -12,7 +14,8 @@ import {
   TrashIcon,
   CheckIcon,
   XMarkIcon,
-  PencilSquareIcon
+  PencilSquareIcon,
+  DocumentArrowDownIcon
 } from '@heroicons/react/24/outline';
 
 export default function AssignShifts() {
@@ -454,6 +457,76 @@ export default function AssignShifts() {
     return map;
   };
 
+  // NEW: Export current week assigned shifts to PDF
+  const exportScheduleToPDF = () => {
+    const { days, byDate } = getWeekShiftsGrouped();
+    const weekNumber = getWeekNumberUTC(selectedDate);
+    const weekStart = days[0]?.dateObj;
+    const weekEnd = days[6]?.dateObj;
+    
+    // Get all shifts for the current week (both confirmed and preview)
+    const allWeekShifts = [];
+    days.forEach(({ date }) => {
+      const dayShifts = byDate[date] || [];
+      dayShifts.forEach(shift => {
+        allWeekShifts.push({
+          ...shift,
+          date: date,
+          dayName: new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
+        });
+      });
+    });
+
+    if (allWeekShifts.length === 0) {
+      alert('No shifts available for the current week to export.');
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    
+    // Title
+    const title = `Weekly Schedule - Week ${weekNumber} (${weekStart?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`;
+    doc.setFontSize(16);
+    doc.text(title, 40, 40);
+
+    // Summary
+    const totalHours = allWeekShifts.reduce((sum, s) => sum + getShiftHours(s), 0);
+    doc.setFontSize(12);
+    doc.text(`Total Assigned Hours: ${formatWorkingHours(totalHours)}`, 40, 70);
+
+    // Table data
+    const rows = allWeekShifts.map(shift => [
+      new Date(shift.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      shift.dayName,
+      shift.employee,
+      `${formatTime(shift.startTime)} - ${formatTime(shift.endTime)}`,
+      shift.location,
+      shift.kind,
+      formatWorkingHours(getShiftHours(shift))
+    ]);
+
+    doc.autoTable({
+      startY: 90,
+      head: [['Date', 'Day', 'Employee', 'Time', 'Location', 'Type', 'Hours']],
+      body: rows,
+      theme: 'grid',
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [59, 130, 246] },
+      columnStyles: { 
+        0: { cellWidth: 60 }, 
+        1: { cellWidth: 70 }, 
+        2: { cellWidth: 80 }, 
+        3: { cellWidth: 80 },
+        4: { cellWidth: 70 },
+        5: { cellWidth: 50 },
+        6: { cellWidth: 50 }
+      }
+    });
+
+    const filename = `weekly_schedule_week_${weekNumber}_${new Date().toISOString().slice(0, 10)}.pdf`;
+    doc.save(filename);
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -651,6 +724,9 @@ export default function AssignShifts() {
 
         {/* Schedule Actions */}
         <div className="flex justify-end space-x-3 pt-6">
+          <button type="button" onClick={exportScheduleToPDF} className="inline-flex items-center px-4 py-2 border border-green-500 text-sm font-medium rounded-md text-green-600 bg-white hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+            <DocumentArrowDownIcon className="h-4 w-4 mr-2" /> Export to PDF
+          </button>
           <button type="button" onClick={() => setIsPreviewModalOpen(true)} className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">Preview Schedule</button>
           <button type="button" onClick={resetSchedule} className="inline-flex items-center px-4 py-2 border border-red-500 text-sm font-medium rounded-md text-red-600 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Reset Schedule</button>
         </div>
