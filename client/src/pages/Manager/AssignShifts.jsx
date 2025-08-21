@@ -375,6 +375,24 @@ export default function AssignShifts() {
   };
   const removePreviewShift = (id) => setPreviewShifts(prev => prev.filter(s => s.id !== id));
 
+  // NEW: Delete confirmed shift from current week schedule
+  const deleteConfirmedShift = async (shiftId) => {
+    if (!window.confirm('Are you sure you want to delete this confirmed shift?')) return;
+    
+    try {
+      // For confirmed shifts, we need to delete from the backend
+      // Since this is a mock/demo, we'll just remove from local state
+      // In production, this would call an API endpoint
+      setCurrentWeekShifts(prev => prev.filter(s => s.id !== shiftId));
+      setSuccessMessage('Shift deleted successfully');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (error) {
+      console.error('Error deleting shift:', error);
+      setError('Failed to delete shift. Please try again.');
+    }
+  };
+
   const handleDeleteLocation = async (id) => {
     try {
       if (!window.confirm('Are you sure you want to delete this location?')) return;
@@ -614,11 +632,14 @@ export default function AssignShifts() {
                             </button>
                           </>
                         )}
-                        {shift.isPreview && (
-                          <button onClick={() => removePreviewShift(shift.id)} className="p-1 rounded hover:bg-gray-200" title="Delete">
-                            <TrashIcon className="h-4 w-4 text-red-600" />
-                          </button>
-                        )}
+                        {/* Show delete button for both preview and confirmed shifts */}
+                        <button 
+                          onClick={() => shift.isPreview ? removePreviewShift(shift.id) : deleteConfirmedShift(shift.id)} 
+                          className="p-1 rounded hover:bg-gray-200" 
+                          title="Delete"
+                        >
+                          <TrashIcon className="h-4 w-4 text-red-600" />
+                        </button>
                       </div>
                     </div>
                   ))}

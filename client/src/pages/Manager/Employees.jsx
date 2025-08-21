@@ -8,6 +8,11 @@ function EmployeeModal({ employee, onClose }) {
   const [error, setError] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [loginHistoryLimit, setLoginHistoryLimit] = useState(4);
+  
+  // NEW: Edit mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editFields, setEditFields] = useState({});
+  const [successMessage, setSuccessMessage] = useState('');
 
   const refresh = async () => {
     try {
@@ -132,6 +137,37 @@ function EmployeeModal({ employee, onClose }) {
     }
   };
 
+  // NEW: Handle employee details edit
+  const handleEditEmployee = () => {
+    setIsEditing(true);
+    setEditFields({
+      name: details.name || '',
+      email: details.email || '',
+      homeLocation: details.homeLocation || '',
+      linkedinUrl: details.linkedinUrl || '',
+      whatsapp: details.whatsapp || ''
+    });
+  };
+
+  const handleSaveEmployee = async () => {
+    try {
+      const response = await api.put(`/users/${employee.id}`, editFields);
+      setDetails(prev => ({ ...prev, ...response.data }));
+      setIsEditing(false);
+      setHasChanges(true);
+      setSuccessMessage('Employee details updated successfully!');
+      setTimeout(() => setSuccessMessage(false), 3000);
+    } catch (err) {
+      console.error('Error updating employee:', err);
+      alert('Failed to update employee details. Please try again.');
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditFields({});
+  };
+
   const handleClickOutside = (e) => {
     if (e.target === e.currentTarget) {
       onClose();
@@ -160,15 +196,41 @@ function EmployeeModal({ employee, onClose }) {
               <p className="text-sm text-gray-600">ID: {employee.id}</p>
             </div>
           </div>
-          <button 
-            onClick={onClose} 
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* NEW: Edit button */}
+            {!isEditing && (
+              <button 
+                onClick={handleEditEmployee}
+                className="inline-flex items-center px-3 py-2 border border-blue-300 text-sm font-medium rounded-md text-blue-700 bg-white hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <svg className="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Edit
+              </button>
+            )}
+            <button 
+              onClick={onClose} 
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
+
+        {/* NEW: Success Message */}
+        {successMessage && (
+          <div className="px-6 py-3 bg-green-50 border-b border-green-200">
+            <div className="flex items-center">
+              <svg className="h-5 w-5 text-green-400 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <p className="text-sm font-medium text-green-800">{successMessage}</p>
+            </div>
+          </div>
+        )}
 
         {/* Content */}
         <div className="p-6 space-y-6">
@@ -202,6 +264,73 @@ function EmployeeModal({ employee, onClose }) {
 
           {details && !loading && (
             <>
+              {/* NEW: Employee Details Edit Form */}
+              {isEditing && (
+                <Card title="Edit Employee Details">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                      <input 
+                        type="text" 
+                        value={editFields.name} 
+                        onChange={(e) => setEditFields(prev => ({ ...prev, name: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                      <input 
+                        type="email" 
+                        value={editFields.email} 
+                        onChange={(e) => setEditFields(prev => ({ ...prev, email: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Home Location</label>
+                      <input 
+                        type="text" 
+                        value={editFields.homeLocation} 
+                        onChange={(e) => setEditFields(prev => ({ ...prev, homeLocation: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">LinkedIn URL</label>
+                      <input 
+                        type="url" 
+                        value={editFields.linkedinUrl} 
+                        onChange={(e) => setEditFields(prev => ({ ...prev, linkedinUrl: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">WhatsApp</label>
+                      <input 
+                        type="text" 
+                        value={editFields.whatsapp} 
+                        onChange={(e) => setEditFields(prev => ({ ...prev, whatsapp: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <div className="flex gap-3 pt-2">
+                      <button 
+                        onClick={handleSaveEmployee}
+                        className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Save Changes
+                      </button>
+                      <button 
+                        onClick={handleCancelEdit}
+                        className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
               {/* Current Status */}
               <Card title="Current Status">
                 <div className="flex items-center gap-4">
