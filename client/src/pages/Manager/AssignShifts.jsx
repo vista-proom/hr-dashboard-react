@@ -3,8 +3,6 @@ import api from '../../api';
 import Card from '../../components/Card';
 import LocationModal from '../../components/LocationModal';
 import { useAuth } from '../../context/AuthContext';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 import { 
   UserIcon, 
   CalendarIcon, 
@@ -17,6 +15,10 @@ import {
   PencilSquareIcon,
   DocumentArrowDownIcon
 } from '@heroicons/react/24/outline';
+
+// Import jsPDF and jspdf-autotable after other imports to ensure proper initialization
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 export default function AssignShifts() {
   const { user } = useAuth();
@@ -459,28 +461,38 @@ export default function AssignShifts() {
 
   // NEW: Export current week assigned shifts to PDF
   const exportScheduleToPDF = () => {
-    const { days, byDate } = getWeekShiftsGrouped();
-    const weekNumber = getWeekNumberUTC(selectedDate);
-    const weekStart = days[0]?.dateObj;
-    const weekEnd = days[6]?.dateObj;
-    
-    // Get all shifts for the current week (both confirmed and preview)
-    const allWeekShifts = [];
-    days.forEach(({ date }) => {
-      const dayShifts = byDate[date] || [];
-      dayShifts.forEach(shift => {
-        allWeekShifts.push({
-          ...shift,
-          date: date,
-          dayName: new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
+    try {
+      const { days, byDate } = getWeekShiftsGrouped();
+      const weekNumber = getWeekNumberUTC(selectedDate);
+      const weekStart = days[0]?.dateObj;
+      const weekEnd = days[6]?.dateObj;
+      
+      // Get all shifts for the current week (both confirmed and preview)
+      const allWeekShifts = [];
+      days.forEach(({ date }) => {
+        const dayShifts = byDate[date] || [];
+        dayShifts.forEach(shift => {
+          allWeekShifts.push({
+            ...shift,
+            date: date,
+            dayName: new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
+          });
         });
       });
-    });
 
-    if (allWeekShifts.length === 0) {
-      alert('No shifts available for the current week to export.');
-      return;
-    }
+      if (allWeekShifts.length === 0) {
+        alert('No shifts available for the current week to export.');
+        return;
+      }
+      
+      // Verify jsPDF and autoTable are available
+      if (typeof jsPDF === 'undefined') {
+        throw new Error('jsPDF is not available');
+      }
+      
+      if (typeof jsPDF.prototype.autoTable === 'undefined') {
+        throw new Error('autoTable plugin is not available');
+      }
 
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
     
@@ -525,6 +537,10 @@ export default function AssignShifts() {
 
     const filename = `weekly_schedule_week_${weekNumber}_${new Date().toISOString().slice(0, 10)}.pdf`;
     doc.save(filename);
+    } catch (error) {
+      console.error('PDF export error:', error);
+      alert(`Failed to export PDF: ${error.message}`);
+    }
   };
 
   if (loading) {

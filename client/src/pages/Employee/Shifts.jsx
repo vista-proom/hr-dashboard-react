@@ -1,7 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 import api from '../../api';
 import Card from '../../components/Card';
 import { useAuth } from '../../context/AuthContext';
@@ -15,6 +13,10 @@ import {
   CheckIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
+
+// Import jsPDF and jspdf-autotable after other imports to ensure proper initialization
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 export default function Shifts() {
   const { user, getCurrentLocation, getDeviceType, socket } = useAuth();
@@ -205,17 +207,27 @@ export default function Shifts() {
   };
 
   const exportScheduleToPDF = () => {
-    if (!shifts || shifts.length === 0) {
-      alert('No assigned shifts available to export.');
-      return;
-    }
-    
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    const todayIso = new Date().toISOString().slice(0,10);
-    const week = weekNumberFromISO(todayIso);
-    const title = `My Assigned Shifts - ${user?.name || ''} (Week ${week})`;
-    doc.setFontSize(16);
-    doc.text(title, 40, 40);
+    try {
+      if (!shifts || shifts.length === 0) {
+        alert('No assigned shifts available to export.');
+        return;
+      }
+      
+      // Verify jsPDF and autoTable are available
+      if (typeof jsPDF === 'undefined') {
+        throw new Error('jsPDF is not available');
+      }
+      
+      if (typeof jsPDF.prototype.autoTable === 'undefined') {
+        throw new Error('autoTable plugin is not available');
+      }
+      
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const todayIso = new Date().toISOString().slice(0,10);
+      const week = weekNumberFromISO(todayIso);
+      const title = `My Assigned Shifts - ${user?.name || ''} (Week ${week})`;
+      doc.setFontSize(16);
+      doc.text(title, 40, 40);
 
     // Group shifts by date for PDF export
     const groupedShifts = groupShiftsByDate(shifts);
@@ -279,13 +291,18 @@ export default function Shifts() {
 
     const filename = `assigned_shifts_${(user?.name || 'me').replace(/\s+/g,'_')}_week_${week}.pdf`;
     doc.save(filename);
+    } catch (error) {
+      console.error('PDF export error:', error);
+      alert(`Failed to export PDF: ${error.message}`);
+    }
   };
 
   const exportLoginHistoryToExcel = () => {
-    if (!loginHistory || loginHistory.length === 0) {
-      alert('No login history data available to export.');
-      return;
-    }
+    try {
+      if (!loginHistory || loginHistory.length === 0) {
+        alert('No login history data available to export.');
+        return;
+      }
 
     const loginHistoryData = loginHistory.map(login => ({
       'Check-in Date': login.date ? new Date(login.date).toLocaleDateString('en-GB') : '—',
@@ -301,13 +318,20 @@ export default function Shifts() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Login History');
     
-    // Dynamic filename with date and time
+    // Dynamic filename with date and time in DD-MM-YYYY_HH-mm format
     const now = new Date();
-    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '-');
-    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, '-');
-    const filename = `LoginHistory_${dateStr}_${timeStr}.xlsx`;
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const filename = `login_history_${day}-${month}-${year}_${hours}-${minutes}.xlsx`;
     
     XLSX.writeFile(wb, filename);
+    } catch (error) {
+      console.error('Excel export error:', error);
+      alert(`Failed to export Excel: ${error.message}`);
+    }
   };
 
   const formatTime12h = (time) => {
