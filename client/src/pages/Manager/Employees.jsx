@@ -8,6 +8,9 @@ function EmployeeModal({ employee, onClose }) {
   const [error, setError] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [loginHistoryLimit, setLoginHistoryLimit] = useState(4);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editFields, setEditFields] = useState({});
+  const [successMessage, setSuccessMessage] = useState('');
 
   const refresh = async () => {
     try {
@@ -125,10 +128,42 @@ function EmployeeModal({ employee, onClose }) {
       // Refresh to get latest data
       await refresh();
       setHasChanges(false);
-      alert('Changes saved successfully!');
+      setSuccessMessage('Changes saved successfully!');
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err) {
       console.error('Error saving changes:', err);
       alert('Failed to save changes. Please try again.');
+    }
+  };
+
+  const beginEdit = () => {
+    if (!details) return;
+    setIsEditing(true);
+    setEditFields({
+      name: details.name || '',
+      email: details.email || '',
+      homeLocation: details.homeLocation || '',
+      linkedinUrl: details.linkedinUrl || '',
+      whatsapp: details.whatsapp || ''
+    });
+  };
+
+  const cancelEdit = () => {
+    setIsEditing(false);
+    setEditFields({});
+  };
+
+  const saveEdit = async () => {
+    try {
+      await api.put(`/users/${employee.id}`, editFields);
+      await refresh();
+      setIsEditing(false);
+      setHasChanges(true);
+      setSuccessMessage('Employee details updated successfully!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      console.error('Error updating employee:', err);
+      alert('Failed to update employee details. Please try again.');
     }
   };
 
@@ -160,15 +195,26 @@ function EmployeeModal({ employee, onClose }) {
               <p className="text-sm text-gray-600">ID: {employee.id}</p>
             </div>
           </div>
-          <button 
-            onClick={onClose} 
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-2">
+            {!isEditing && (
+              <button onClick={beginEdit} className="px-3 py-2 border border-blue-300 rounded-md text-blue-700 bg-white hover:bg-blue-50 text-sm">Edit</button>
+            )}
+            <button 
+              onClick={onClose} 
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
+
+        {successMessage && (
+          <div className="px-6 py-3 bg-green-50 border-b border-green-200">
+            <div className="text-sm font-medium text-green-800">{successMessage}</div>
+          </div>
+        )}
 
         {/* Content */}
         <div className="p-6 space-y-6">
@@ -202,6 +248,36 @@ function EmployeeModal({ employee, onClose }) {
 
           {details && !loading && (
             <>
+              {isEditing && (
+                <Card title="Edit Employee Details">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm mb-1">Name</label>
+                      <input value={editFields.name} onChange={e=>setEditFields(p=>({...p,name:e.target.value}))} className="w-full px-3 py-2 border rounded" />
+                    </div>
+                    <div>
+                      <label className="block text-sm mb-1">Email</label>
+                      <input type="email" value={editFields.email} onChange={e=>setEditFields(p=>({...p,email:e.target.value}))} className="w-full px-3 py-2 border rounded" />
+                    </div>
+                    <div>
+                      <label className="block text-sm mb-1">Home Location</label>
+                      <input value={editFields.homeLocation} onChange={e=>setEditFields(p=>({...p,homeLocation:e.target.value}))} className="w-full px-3 py-2 border rounded" />
+                    </div>
+                    <div>
+                      <label className="block text-sm mb-1">LinkedIn URL</label>
+                      <input value={editFields.linkedinUrl} onChange={e=>setEditFields(p=>({...p,linkedinUrl:e.target.value}))} className="w-full px-3 py-2 border rounded" />
+                    </div>
+                    <div>
+                      <label className="block text-sm mb-1">WhatsApp</label>
+                      <input value={editFields.whatsapp} onChange={e=>setEditFields(p=>({...p,whatsapp:e.target.value}))} className="w-full px-3 py-2 border rounded" />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={saveEdit} className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
+                    <button onClick={cancelEdit} className="px-4 py-2 border rounded">Cancel</button>
+                  </div>
+                </Card>
+              )}
               {/* Current Status */}
               <Card title="Current Status">
                 <div className="flex items-center gap-4">

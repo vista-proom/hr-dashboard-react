@@ -375,51 +375,49 @@ export default function AssignShifts() {
   };
   const removePreviewShift = (id) => setPreviewShifts(prev => prev.filter(s => s.id !== id));
 
-  const handleDeleteLocation = async (id) => {
-    try {
-      if (!window.confirm('Are you sure you want to delete this location?')) return;
-      
-      const response = await api.delete(`/locations/${id}`);
-      
-      if (response.data.hadReferences) {
-        // Show additional confirmation if location had references
-        const confirmed = window.confirm(
-          'This location is linked to other records. Deleting it will also remove those records. Are you sure you want to proceed?'
-        );
-        
-        if (!confirmed) {
-          // If user cancels, we need to refresh to restore the location
-          await loadData();
-          return;
-        }
-      }
-      
-      // Remove from local state
-      setLocations(prev => prev.filter(l => l.id !== id));
-      
-      // Show success message
-      setSuccessMessage(response.data.note || 'Location deleted successfully!');
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
-      
-    } catch (err) {
-      console.error('Delete location failed', err);
-      const errorMsg = err.response?.data?.error || 'Failed to delete location';
-      alert(`Error: ${errorMsg}`);
-    }
-  };
-
+  // NEW: Submit preview shifts to backend, use API response IDs for state
   const submitPreviewShifts = async () => {
     try {
       const shiftsToSubmit = [...previewShifts];
+      const created = [];
       for (const preview of shiftsToSubmit) {
-        await api.post('/employee-shifts/assign', { employeeId: preview.employeeId, employeeName: preview.employee, shiftData: { date: preview.date, startTime: preview.startTime, endTime: preview.endTime, locationId: preview.locationId, locationName: preview.location, kind: preview.kind } });
+        const resp = await api.post('/employee-shifts/assign', { employeeId: preview.employeeId, employeeName: preview.employee, shiftData: { date: preview.date, startTime: preview.startTime, endTime: preview.endTime, locationId: preview.locationId, locationName: preview.location, kind: preview.kind } });
+        const s = resp.data; // expect: { id, date, start_time, end_time, location_name }
+        created.push({
+          id: s.id,
+          date: s.date,
+          employee: preview.employee,
+          employeeId: preview.employeeId,
+          startTime: s.start_time,
+          endTime: s.end_time,
+          location: s.location_name,
+          locationId: preview.locationId,
+          kind: preview.kind,
+          status: 'confirmed',
+          isPreview: false
+        });
       }
-      setCurrentWeekShifts(prev => [...prev, ...shiftsToSubmit.map(s => ({ ...s, status: 'confirmed' }))]);
+      setCurrentWeekShifts(prev => [...prev, ...created]);
       setPreviewShifts([]); setIsPreviewModalOpen(false);
       setSuccessMessage('Shifts submitted successfully.'); setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 4000);
     } catch (err) { console.error('Error submitting shifts', err); setError('Failed to submit shifts.'); }
+  };
+
+  // NEW: Delete confirmed assigned shift from backend and update UI immediately
+  const deleteAssignedShift = async (employeeId, shiftId) => {
+    if (!window.confirm('Are you sure you want to delete this shift?')) return;
+    try {
+      await api.delete(`/employee-shifts/${employeeId}/${shiftId}`);
+      setCurrentWeekShifts(prev => prev.filter(s => s.id !== shiftId));
+      setSuccessMessage('Shift deleted successfully');
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    } catch (err) {
+      console.error('Error deleting shift:', err);
+      const msg = err.response?.data?.error || 'Failed to delete shift. Please try again.';
+      setError(msg);
+    }
   };
 
   // Totals for preview-only (exclude existing confirmed shifts)
@@ -516,10 +514,10 @@ export default function AssignShifts() {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+              <label className="block text_sm font-medium text-gray-700 mb-1">End Time</label>
               <div className="relative">
                 <ClockIcon className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required />
+                <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="w_full pl-9 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline_none focus:ring-blue-500 focus:border-blue-500" required />
               </div>
             </div>
             <div>
@@ -548,10 +546,10 @@ export default function AssignShifts() {
 
           {/* Form Buttons */}
           <div className="flex items-center space-x-3 pt-2">
-            <button type="submit" className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+            <button type="submit" className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline_none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
               <CheckIcon className="h-4 w-4 mr-2" /> Save Shift
             </button>
-            <button type="button" onClick={clearForm} className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+            <button type="button" onClick={clearForm} className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline_none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
               <XMarkIcon className="h-4 w-4 mr-2" /> Clear
             </button>
           </div>
@@ -614,11 +612,10 @@ export default function AssignShifts() {
                             </button>
                           </>
                         )}
-                        {shift.isPreview && (
-                          <button onClick={() => removePreviewShift(shift.id)} className="p-1 rounded hover:bg-gray-200" title="Delete">
-                            <TrashIcon className="h-4 w-4 text-red-600" />
-                          </button>
-                        )}
+                        {/* Always show delete; for preview remove locally, for confirmed call backend */}
+                        <button onClick={() => (shift.isPreview ? removePreviewShift(shift.id) : deleteAssignedShift(shift.employeeId, shift.id))} className="p-1 rounded hover:bg-gray-200" title="Delete">
+                          <TrashIcon className="h-4 w-4 text-red-600" />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -680,10 +677,10 @@ export default function AssignShifts() {
 
       {/* Preview Schedule Modal */}
       {isPreviewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items_center justify_center">
           <div className="absolute inset-0 bg-black/30" onClick={() => setIsPreviewModalOpen(false)}></div>
           <div className="relative bg-white w-full max-w-4xl mx-4 rounded-md shadow-lg">
-            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+            <div className="px-4 py-3 border-b border-gray-200 flex items_center justify_between">
               <h3 className="text-base font-semibold text-gray-900">Preview Schedule</h3>
               <button onClick={() => setIsPreviewModalOpen(false)} className="p-1 rounded hover:bg-gray-100"><XMarkIcon className="h-5 w-5 text-gray-600" /></button>
             </div>

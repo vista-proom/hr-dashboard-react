@@ -140,3 +140,26 @@ router.get('/:id/comprehensive', requireRole('Viewer', 'Manager'), (req, res) =>
 });
 
 export default router;
+// NEW: Update user details by ID (Manager only)
+router.put('/:id', requireRole('Manager'), (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const { name, email, homeLocation, linkedinUrl, whatsapp } = req.body || {};
+    if (!name || !email) {
+      return res.status(400).json({ error: 'Name and email are required' });
+    }
+    const existing = db.getUserById(userId);
+    if (!existing) return res.status(404).json({ error: 'User not found' });
+    const updated = db.updateUser(userId, {
+      name,
+      email,
+      home_location: homeLocation,
+      linkedin_url: linkedinUrl,
+      whatsapp
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error('Error updating user:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
